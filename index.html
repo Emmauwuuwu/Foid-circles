@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulsar</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-hex" viewBox="0 0 24 24"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z" fill="currentColor"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15L20 12z" fill="currentColor"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 4.5h4.5v15H6zM13.5 4.5H18v15h-4.5z" fill="currentColor"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 4.5v5M8 14.5v5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><path d="M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.5 15.5L21 21" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 5L4 10l5 5M4 10h10a5 5 0 0 1 0 10h-3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 5l5 5-5 5M20 10H10a5 5 0 0 0 0 10h3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-start" viewBox="0 0 24 24"><path d="M6 5v14M19 5L9 12l10 7z" fill="currentColor" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M12 5L3 12l9 7zM21 5l-9 7 9 7z" fill="currentColor"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M12 5l9 7-9 7zM3 5l9 7-9 7z" fill="currentColor"/></symbol>
+  <symbol id="i-select" viewBox="0 0 24 24"><path d="M6 3l13 9.5-6 1 3.5 6.5-2.5 1.3-3.4-6.6L6 19z" fill="currentColor"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 9l2.6 1.5v3L12 15l-2.6-1.5v-3z" fill="currentColor"/></symbol>
+  <symbol id="i-slider" viewBox="0 0 24 24"><path d="M5 18C5 8 12 16 19 6" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M5 15.5l2.2 1.2v2.6L5 20.5l-2.2-1.2v-2.6zM19 3.5l2.2 1.2v2.6L19 8.5l-2.2-1.2V4.7z" fill="currentColor"/></symbol>
+  <symbol id="i-spin" viewBox="0 0 24 24"><path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5V9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8l3.5 2v4L12 16l-3.5-2v-2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-rec" viewBox="0 0 24 24"><path d="M12 4l6.9 4v8L12 20l-6.9-4V8z" fill="currentColor"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 3v12M6.5 10l5.5 5.5 5.5-5.5M4 20.5h16" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+</svg>
+
+<canvas id="stage"></canvas>
+<canvas id="art" class="hidden"></canvas>
+
+<!-- ============ Song select ============ -->
+<section id="menu" class="screen hidden">
+  <header class="topbar">
+    <div class="logo"><svg class="i"><use href="#i-hex"/></svg><span>PULSAR</span></div>
+    <label class="search">
+      <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
+      <input id="search" type="search" placeholder="Search songs" aria-label="Search songs" autocomplete="off">
+      <kbd>/</kbd>
+    </label>
+    <div class="top-actions">
+      <button class="btn" id="btn-new">New map</button>
+      <button class="btn" id="btn-import">Import</button>
+      <button class="btn square" id="btn-settings" aria-label="Settings"><svg class="i" aria-hidden="true"><use href="#i-gear"/></svg></button>
+      <input type="file" id="file" accept=".osz,.olz,.osu" multiple class="hidden">
+    </div>
+  </header>
+
+  <div class="crate">
+    <nav class="index" aria-label="Songs">
+      <div class="filters" id="filters"></div>
+      <ol id="library"></ol>
+    </nav>
+
+    <main class="hero" id="hero">
+      <div id="notice" class="hidden" role="alert"></div>
+      <p class="kicker" id="hero-kicker"></p>
+      <h1 id="hero-title"></h1>
+      <p class="artist" id="hero-artist"></p>
+      <div class="diffs" id="hero-diffs" role="radiogroup" aria-label="Difficulty"></div>
+      <dl class="facts" id="hero-facts"></dl>
+      <div class="actions">
+        <button class="play" id="btn-play"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Play<kbd>Enter</kbd></button>
+        <button class="btn big" id="btn-edit"><span id="btn-edit-label">Edit</span><kbd>E</kbd></button>
+        <div class="mods">
+          <label class="switch"><input type="checkbox" id="mod-nofail"><span class="track"></span><span>No fail</span></label>
+          <label class="switch"><input type="checkbox" id="mod-auto"><span class="track"></span><span>Auto</span></label>
+        </div>
+      </div>
+      <div class="hero-foot">
+        <p class="keyline" id="hero-keys"></p>
+        <button class="link" id="btn-remove">Remove</button>
+      </div>
+    </main>
+  </div>
+
+  <aside id="settings" class="drawer" aria-label="Settings">
+    <div class="drawer-head">
+      <h2>Settings</h2>
+      <button class="btn" id="settings-close">Done</button>
+    </div>
+    <h3>Sound</h3>
+    <label class="slide"><span class="slide-top"><span>Music</span><output id="set-music-val"></output></span><input type="range" id="set-music" min="0" max="1" step="0.05"></label>
+    <label class="slide"><span class="slide-top"><span>Hit sounds</span><output id="set-sfx-val"></output></span><input type="range" id="set-sfx" min="0" max="1" step="0.05"></label>
+    <label class="slide"><span class="slide-top"><span>Audio offset</span><output id="set-offset-val"></output></span><input type="range" id="set-offset" min="-150" max="150" step="5"><small>If you always hit late, raise this. If early, lower it.</small></label>
+    <h3>Gameplay</h3>
+    <label class="slide"><span class="slide-top"><span>Mania scroll time</span><output id="set-scroll-val"></output></span><input type="range" id="set-scroll" min="250" max="1500" step="25"><small>Lower means faster notes.</small></label>
+    <h3>Controls</h3>
+    <dl class="ctl">
+      <div><dt>Standard</dt><dd>Mouse to aim, <kbd>Z</kbd> <kbd>X</kbd> or click</dd></div>
+      <div><dt>Taiko</dt><dd><kbd>F</kbd> <kbd>J</kbd> center, <kbd>D</kbd> <kbd>K</kbd> rim</dd></div>
+      <div><dt>Catch</dt><dd><kbd>←</kbd> <kbd>→</kbd> move, <kbd>Shift</kbd> dash</dd></div>
+      <div><dt>Mania</dt><dd>Keys shown under the columns</dd></div>
+      <div><dt>In a song</dt><dd><kbd>Esc</kbd> pause, <kbd>Space</kbd> skip intro</dd></div>
+    </dl>
+  </aside>
+
+  <section id="newmap" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="nm-heading">
+    <form class="sheet" id="newmap-form">
+      <h2 id="nm-heading">New map</h2>
+      <div class="sheet-row">
+        <span class="sheet-label">Song</span>
+        <button type="button" class="btn wide file-btn" id="nm-pick"><span id="nm-file-name">Choose an audio file</span></button>
+        <input type="file" id="nm-file" accept="audio/*,.mp3,.ogg,.wav,.flac,.m4a" class="hidden">
+        <span class="sheet-or">or use a Pulsar song</span>
+        <div class="chips" id="nm-sources"></div>
+      </div>
+      <div class="sheet-grid">
+        <label class="field-stack"><span>Title</span><input type="text" id="nm-title" autocomplete="off"></label>
+        <label class="field-stack"><span>Artist</span><input type="text" id="nm-artist" autocomplete="off"></label>
+        <label class="field-stack"><span>Mapped by</span><input type="text" id="nm-creator" autocomplete="off"></label>
+      </div>
+      <div class="sheet-row">
+        <span class="sheet-label">Type of map</span>
+        <div class="modes" id="nm-modes">
+          <button type="button" data-mode="0"><b>Standard</b><small>Aim and click</small></button>
+          <button type="button" data-mode="1"><b>Taiko</b><small>Two drums, one lane</small></button>
+          <button type="button" data-mode="2"><b>Catch</b><small>Slide to catch</small></button>
+          <button type="button" data-mode="3"><b>Mania</b><small>Falling columns</small></button>
+        </div>
+        <div class="stepper hidden" id="nm-keys-row">
+          <span>Keys</span>
+          <button type="button" class="btn" id="nm-keys-down" aria-label="Fewer keys">−</button>
+          <b id="nm-keys">4</b>
+          <button type="button" class="btn" id="nm-keys-up" aria-label="More keys">+</button>
+        </div>
+      </div>
+      <p id="nm-error" class="sheet-error hidden" role="alert"></p>
+      <div class="sheet-foot">
+        <span class="sheet-need" id="nm-need">Pick a song to continue.</span>
+        <button type="button" class="btn" id="nm-cancel">Cancel</button>
+        <button type="submit" class="play small" id="nm-create">Start mapping</button>
+      </div>
+    </form>
+  </section>
+</section>
+
+<!-- ============ Loading ============ -->
+<section id="loading" class="screen center hidden">
+  <div class="loader">
+    <svg class="i spinner" aria-hidden="true"><use href="#i-hex"/></svg>
+    <div id="loading-text" role="status">Loading</div>
+  </div>
+</section>
+
+<!-- ============ Pause ============ -->
+<section id="pause" class="screen center dim hidden">
+  <div class="pause-box">
+    <p class="kicker" id="pause-song"></p>
+    <h2>Paused</h2>
+    <div class="stack">
+      <button class="play" id="btn-resume"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Continue<kbd>Esc</kbd></button>
+      <button class="btn big" id="btn-retry">Start over</button>
+      <button class="btn big" id="btn-quit">Quit to songs</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Results ============ -->
+<section id="results" class="screen center hidden">
+  <div class="results">
+    <div class="grade" id="res-grade-wrap">
+      <svg viewBox="0 0 100 100" aria-hidden="true"><path d="M50 3l40.7 23.5v47L50 97 9.3 73.5v-47z"/></svg>
+      <span id="res-grade"></span>
+    </div>
+    <div class="res-body">
+      <p class="kicker" id="res-sub"></p>
+      <h2 id="res-title"></h2>
+      <p class="res-score" id="res-score"></p>
+      <p class="res-new hidden" id="res-best">New best score</p>
+      <dl class="facts">
+        <div><dt>Accuracy</dt><dd id="res-acc"></dd></div>
+        <div><dt>Best combo</dt><dd id="res-combo"></dd></div>
+      </dl>
+      <div class="hitbar" aria-hidden="true">
+        <i id="res-bar-perfect" class="p"></i><i id="res-bar-great" class="g"></i><i id="res-bar-ok" class="o"></i><i id="res-bar-miss" class="m"></i>
+      </div>
+      <dl class="hits">
+        <div class="p"><dt>Perfect</dt><dd id="res-perfect"></dd></div>
+        <div class="g"><dt>Great</dt><dd id="res-great"></dd></div>
+        <div class="o"><dt>OK</dt><dd id="res-ok"></dd></div>
+        <div class="m"><dt>Miss</dt><dd id="res-miss"></dd></div>
+      </dl>
+      <p class="res-timing" id="res-timing"></p>
+      <div class="actions">
+        <button class="play" id="res-retry"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Play again<kbd>Enter</kbd></button>
+        <button class="btn big" id="res-back">Back to songs<kbd>Esc</kbd></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Editor ============ -->
+<section id="editor" class="screen hidden">
+  <header class="ed-top">
+    <button class="btn" id="ed-exit"><svg class="i" aria-hidden="true"><use href="#i-back"/></svg>Songs</button>
+    <div class="ed-name">
+      <b id="ed-title"></b>
+      <span><span id="ed-version"></span> · <span id="ed-mode"></span> · <span id="ed-saved">All changes saved</span></span>
+    </div>
+    <div class="ed-top-actions">
+      <button class="btn square" id="ed-undo" aria-label="Undo" title="Undo (Ctrl+Z)"><svg class="i" aria-hidden="true"><use href="#i-undo"/></svg></button>
+      <button class="btn square" id="ed-redo" aria-label="Redo" title="Redo (Ctrl+Y)"><svg class="i" aria-hidden="true"><use href="#i-redo"/></svg></button>
+      <button class="btn" id="ed-help-btn" title="Keyboard shortcuts (?)">Help</button>
+      <button class="btn" id="ed-export" title="Save as an .osz file"><svg class="i" aria-hidden="true"><use href="#i-down"/></svg>Export</button>
+      <button class="btn" id="ed-watch" title="Watch it play itself (Shift+T)">Watch</button>
+      <button class="play small" id="ed-test" title="Play from the playhead (T)"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Test<kbd>T</kbd></button>
+    </div>
+  </header>
+
+  <aside class="ed-left">
+    <h3>Tools</h3>
+    <div id="ed-tools"></div>
+    <h3>Snap <kbd>[</kbd> <kbd>]</kbd></h3>
+    <div id="ed-snaps"></div>
+    <h3>Options</h3>
+    <div id="ed-opts"></div>
+  </aside>
+
+  <div class="ed-stage">
+    <canvas id="ed-canvas"></canvas>
+    <p id="ed-hint" class="ed-hint"></p>
+    <p id="ed-rec-banner" class="ed-rec hidden">Recording. Press <span id="ed-hint-keys"></span> along with the song. <kbd>Esc</kbd> stops.</p>
+    <div id="ed-empty" class="ed-empty hidden">
+      <h3>Three steps to a map</h3>
+      <ol>
+        <li>Open <b>Timing</b> and check the beat. Turn on the metronome and press <kbd>Space</kbd>.</li>
+        <li>Place notes with the mouse, or press <kbd>R</kbd> and tap along with the song.</li>
+        <li>Press <kbd>T</kbd> to play it. <kbd>Esc</kbd> brings you back here.</li>
+      </ol>
+    </div>
+    <div id="ed-toast" class="ed-toast hidden" role="status"></div>
+  </div>
+
+  <aside class="ed-right">
+    <div id="ed-tabs" class="ed-tabs" role="tablist">
+      <button data-tab="note" role="tab">Note</button>
+      <button data-tab="timing" role="tab">Timing</button>
+      <button data-tab="map" role="tab">Map</button>
+    </div>
+    <div id="ed-panel-body" class="ed-panel"></div>
+    <input type="file" id="ed-bg-file" accept="image/*" class="hidden">
+  </aside>
+
+  <footer class="ed-bottom">
+    <div class="ed-transport">
+      <button class="btn square" id="ed-start" aria-label="Go to start" title="Go to start (Home)"><svg class="i" aria-hidden="true"><use href="#i-start"/></svg></button>
+      <button class="btn square" id="ed-back-step" aria-label="Back one beat" title="Back one beat (Down arrow)"><svg class="i" aria-hidden="true"><use href="#i-prev"/></svg></button>
+      <button class="play square" id="ed-play" aria-label="Play" title="Play or pause (Space)"><svg class="i" aria-hidden="true"><use id="ed-play-icon" href="#i-play"/></svg></button>
+      <button class="btn square" id="ed-fwd-step" aria-label="Forward one beat" title="Forward one beat (Up arrow)"><svg class="i" aria-hidden="true"><use href="#i-next"/></svg></button>
+      <div class="ed-clock"><b id="ed-time">0:00.000</b><span id="ed-pos"></span></div>
+      <div class="ed-spacer"></div>
+      <button class="btn rec" id="ed-record" aria-pressed="false" title="Tap along to place notes (R)"><svg class="i" aria-hidden="true"><use href="#i-rec"/></svg>Record<kbd>R</kbd></button>
+      <div class="ed-rate" id="ed-rate" role="group" aria-label="Playback speed"></div>
+    </div>
+    <div class="ed-line-wrap"><canvas id="ed-line"></canvas></div>
+  </footer>
+
+  <div id="ed-help" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ed-help-title">
+    <div class="sheet">
+      <h2 id="ed-help-title">Keys and mouse</h2>
+      <dl class="ctl two">
+        <div><dt>Play or pause</dt><dd><kbd>Space</kbd></dd></div>
+        <div><dt>Move by snap</dt><dd><kbd>←</kbd> <kbd>→</kbd> or mouse wheel</dd></div>
+        <div><dt>Move by beat</dt><dd><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>Shift</kbd> + wheel</dd></div>
+        <div><dt>Zoom</dt><dd><kbd>Ctrl</kbd> + wheel</dd></div>
+        <div><dt>Choose a tool</dt><dd><kbd>1</kbd> to <kbd>5</kbd></dd></div>
+        <div><dt>Finer or coarser snap</dt><dd><kbd>[</kbd> <kbd>]</kbd></dd></div>
+        <div><dt>Delete a note</dt><dd>Right-click it, or <kbd>Del</kbd></dd></div>
+        <div><dt>Remove a slider point</dt><dd>Double-click it</dd></div>
+        <div><dt>Undo, redo</dt><dd><kbd>Ctrl</kbd> <kbd>Z</kbd>, <kbd>Ctrl</kbd> <kbd>Y</kbd></dd></div>
+        <div><dt>Copy, cut, paste</dt><dd><kbd>Ctrl</kbd> <kbd>C</kbd> <kbd>X</kbd> <kbd>V</kbd></dd></div>
+        <div><dt>Select all</dt><dd><kbd>Ctrl</kbd> <kbd>A</kbd></dd></div>
+        <div><dt>Move selection in time</dt><dd><kbd>Ctrl</kbd> <kbd>←</kbd> <kbd>→</kbd></dd></div>
+        <div><dt>Record</dt><dd><kbd>R</kbd>, then tap along</dd></div>
+        <div><dt>Test from here</dt><dd><kbd>T</kbd></dd></div>
+        <div><dt>Watch it play</dt><dd><kbd>Shift</kbd> <kbd>T</kbd></dd></div>
+        <div><dt>Metronome, hit sounds</dt><dd><kbd>M</kbd>, <kbd>H</kbd></dd></div>
+        <div><dt>New combo</dt><dd><kbd>N</kbd></dd></div>
+        <div><dt>Grid</dt><dd><kbd>G</kbd></dd></div>
+      </dl>
+      <div class="sheet-foot"><button class="btn" id="ed-help-close">Close</button></div>
+    </div>
+  </div>
+</section>
+
+<script src="js/mapformat.js"></script>
+<script src="js/mapwrite.js"></script>
+<script src="js/music.js"></script>
+<script src="js/game.js"></script>
+<script src="js/modes.js"></script>
+<script src="js/art.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
