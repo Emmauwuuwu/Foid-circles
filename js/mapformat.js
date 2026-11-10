@@ -115,7 +115,9 @@
     const raw = [];
     for (const seg of segments) {
       if (seg.points.length < 2) continue;
-      raw.push(...samplePoints(seg.kind, seg.points));
+      // Aspire maps can generate hundreds of thousands of samples per segment.
+      // Passing them as function arguments overflows the engine's call stack.
+      for (const point of samplePoints(seg.kind, seg.points)) raw.push(point);
     }
     return fitPath(raw.length ? raw : segments[0].points, length);
   }

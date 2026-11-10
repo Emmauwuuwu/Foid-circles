@@ -492,7 +492,12 @@
         this.health -= 0.03;
         this.fx.push({ kind: 'label', x: o.x, y: o.y, t0: t, text: JUDGE.miss.label, color: JUDGE.miss.color });
       }
-      if (t >= o.t && t <= o.endT) {
+      if (this.mods.auto && t >= o.t) {
+        // Autoplay follows every slider, including overlapping paths and skipped frames.
+        o.tracked = Math.max(0, Math.min(t, o.endT) - o.t);
+        o.tracking = t <= o.endT;
+        o.offFor = 0;
+      } else if (t >= o.t && t <= o.endT) {
         const p = P.sliderPos(o, t);
         const reach = this.radius * (o.tracking ? 2.3 : 1.2);
         o.tracking = holding && Math.hypot(this.cursor.x - p[0], this.cursor.y - p[1]) <= reach;
@@ -515,7 +520,12 @@
     }
 
     updateSpin(o, t, holding) {
-      if (t >= o.t && t <= o.endT && holding) {
+      if (this.mods.auto && t >= o.t) {
+        // Derive rotation from map time, avoiding angle aliasing during stalls.
+        const duration = o.endT - o.t;
+        const progress = duration > 0 ? clamp((t - o.t) / duration, 0, 1) : 1;
+        o.rot = Math.max(this.spinGoal(o), duration / 1000 * 4) * progress;
+      } else if (t >= o.t && t <= o.endT && holding) {
         const a = Math.atan2(this.cursor.y - 192, this.cursor.x - 256);
         if (this.prevAngle != null) {
           let d = a - this.prevAngle;
@@ -540,18 +550,26 @@
 
     autoplay(t, dt) {
       // Settle everything already due first, so a slow frame can't turn into misses.
+      let active = null, next = null, hit = null;
       for (let i = this.first; i < this.objects.length; i++) {
         const o = this.objects[i];
-        if (o.t > t) break;
-        if (o.type === 'tap' && !o.done) this.hitHead(o, o.t);
-        else if (o.type === 'slider' && !o.headDone) this.hitHead(o, o.t);
+        if (o.done) continue;
+        if (o.t > t) { next = o; break; }
+        if (o.type === 'tap' || (o.type === 'slider' && !o.headDone)) {
+          this.hitHead(o, o.t);
+          hit = o;
+        }
+        if (o.type !== 'tap' && t <= o.endT && !active) active = o;
       }
 
-      this.autoHeld = false;
-      const o = this.objects.slice(this.first, this.first + 8).find(x => !x.done && x.type !== 'tap');
-      const next = this.objects.slice(this.first, this.first + 8).find(x => !x.done);
-      if (o && t >= o.t && t <= o.endT + 1) {
-        this.autoHeld = true;
+      this.autoHeld = !!(active || hit);
+      // The visible cursor is a preview; scoring tracks overlapping objects separately.
+      if (hit) {
+        this.cursor.x = hit.x; this.cursor.y = hit.y;
+        return;
+      }
+      const o = active;
+      if (o) {
         if (o.type === 'spin') {
           const a = t / 1000 * Math.PI * 2 * 4;
           this.cursor.x = 256 + Math.cos(a) * 70;

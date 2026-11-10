@@ -1,0 +1,28 @@
+<!doctype html><meta charset="utf-8"><title>Autoplay stress test</title>
+<style>body{margin:0;background:#09080d;color:white;font:18px system-ui}canvas{position:fixed;inset:0}section{position:relative;background:#141923;padding:20px;width:max-content;max-width:90%}button{font:inherit;padding:10px}pre{white-space:pre-wrap}</style>
+<canvas id="stage"></canvas><section><h1>Autoplay stress test</h1><p>1,000 taps, overlapping sliders and spinners, plus a 600 ms stall.</p><button id="run">Run stress test</button><pre id="result">Ready</pre></section>
+<script src="../js/mapformat.js"></script><script src="../js/game.js"></script><script>
+document.querySelector('#run').onclick = async () => {
+  const P = Pulsar, ctx = new AudioContext(); await ctx.resume();
+  P.musicOut = ctx.createGain(); P.musicOut.connect(ctx.destination);
+  const objects = Array.from({length:1000},(_,i)=>({type:'tap',t:1000+i*5,x:40+(i%10)*48,y:60+(i%6)*48,color:i%4,num:i+1}));
+  for (let i=0;i<4;i++) {
+    const x=40+i*140, y=120;
+    objects.push({type:'slider',t:1000,endT:6500,x,y,color:i,num:1,slides:5,path:P.makePath('L',[[x,y],[x,300]],180)});
+    objects.push({type:'spin',t:1500,endT:6500,x:256,y:192,color:i});
+  }
+  objects.sort((a,b)=>a.t-b.t);
+  document.querySelector('#run').disabled=true;
+  document.querySelector('#result').textContent='Running…';
+  const game = new P.StandardGame(document.querySelector('canvas'),{
+    map:{objects,ar:10,cs:5,od:10,hp:5,beatMs:500},audioCtx:ctx,
+    audioBuffer:ctx.createBuffer(1,ctx.sampleRate*10,ctx.sampleRate),mods:{auto:true},
+    onEnd:r=>{
+      document.querySelector('#result').textContent=(r.counts.perfect===1008&&r.accuracy===1?'PASS':'FAIL')+'\n'+JSON.stringify(r,null,2);
+      ctx.close();document.querySelector('#run').disabled=false;
+    }
+  });
+  game.start();
+  setTimeout(()=>{const end=performance.now()+600;while(performance.now()<end){}},4500);
+};
+</script>
