@@ -27,7 +27,28 @@
   function pathOf(o) {
     if (!o.path.p2d) {
       const p = new Path2D();
-      o.path.pts.forEach((pt, i) => (i === 0 ? p.moveTo(pt[0], pt[1]) : p.lineTo(pt[0], pt[1])));
+      if (o.path.pts.length <= 4096) {
+        o.path.pts.forEach((pt, i) => (i === 0 ? p.moveTo(pt[0], pt[1]) : p.lineTo(pt[0], pt[1])));
+      } else {
+        // Only the artwork is rounded to a quarter playfield pixel. Retraced
+        // edges need drawing once; the original timing/movement path stays intact.
+        const edges = new Set();
+        let previous = null, connected = false;
+        for (const pt of o.path.pts) {
+          const x = Math.round(pt[0] * 4), y = Math.round(pt[1] * 4);
+          const key = x + ',' + y;
+          if (previous && previous.key !== key) {
+            const edge = previous.key < key ? previous.key + ':' + key : key + ':' + previous.key;
+            if (!edges.has(edge)) {
+              edges.add(edge);
+              if (!connected) p.moveTo(previous.x / 4, previous.y / 4);
+              p.lineTo(x / 4, y / 4);
+              connected = true;
+            } else connected = false;
+          }
+          previous = { x, y, key };
+        }
+      }
       o.path.p2d = p;
     }
     return o.path.p2d;
@@ -409,6 +430,12 @@
   }
 
   class StandardGame extends Session {
+    resize() {
+      super.resize();
+      this.sliderCache = new Map();
+      this.sliderCacheBytes = 0;
+    }
+
     setup() {
       const m = this.map;
       this.preempt = m.ar < 5 ? 1200 + 600 * (5 - m.ar) / 5 : 1200 - 750 * (m.ar - 5) / 5;
@@ -669,17 +696,8 @@
 
     drawSlider(c, o, t) {
       const color = COLORS[o.color % 4], r = this.radius;
-      const p2d = pathOf(o);
       c.globalAlpha = this.alphaFor(o, t) * 0.92;
-      c.lineCap = 'round'; c.lineJoin = 'round';
-      c.strokeStyle = color;
-      c.lineWidth = r * 1.86;
-      c.stroke(p2d);
-      c.strokeStyle = '#121824';
-      c.lineWidth = r * 1.62;
-      c.stroke(p2d);
-      c.strokeStyle = color + '24';
-      c.stroke(p2d);
+      this.drawSliderBody(c, o, color, r);
 
       const span = (o.endT - o.t) / o.slides;
       const end = o.path.pts[o.path.pts.length - 1];
@@ -710,6 +728,45 @@
         c.lineWidth = 2.5;
         c.stroke();
       }
+    }
+
+    drawSliderBody(c, o, color, r) {
+      const stroke = target => {
+        const path = pathOf(o);
+        target.lineCap = 'round'; target.lineJoin = 'round';
+        target.strokeStyle = color; target.lineWidth = r * 1.86; target.stroke(path);
+        target.strokeStyle = '#121824'; target.lineWidth = r * 1.62; target.stroke(path);
+        target.strokeStyle = color + '24'; target.stroke(path);
+      };
+      // Simple curves are cheap; complex slider bodies are static artwork.
+      if (o.path.pts.length < 256) { stroke(c); return; }
+      let entry = this.sliderCache.get(o);
+      if (!entry) {
+        const scale = Math.min(this.s * this.dpr, 2);
+        const x = -this.ox / this.s, y = -this.oy / this.s;
+        const w = this.W / this.s, h = this.H / this.s;
+        const bitmap = document.createElement('canvas');
+        bitmap.width = Math.ceil(w * scale); bitmap.height = Math.ceil(h * scale);
+        const bytes = bitmap.width * bitmap.height * 4;
+        const limit = 32 * 1024 * 1024;
+        while (this.sliderCacheBytes + bytes > limit && this.sliderCache.size) {
+          const oldest = this.sliderCache.keys().next().value;
+          const removed = this.sliderCache.get(oldest);
+          this.sliderCacheBytes -= removed.bytes;
+          removed.bitmap.width = removed.bitmap.height = 0;
+          this.sliderCache.delete(oldest);
+        }
+        const target = bitmap.getContext('2d');
+        target.setTransform(scale, 0, 0, scale, -x * scale, -y * scale);
+        stroke(target);
+        entry = { bitmap, bytes, x, y, w: bitmap.width / scale, h: bitmap.height / scale };
+        this.sliderCache.set(o, entry);
+        this.sliderCacheBytes += bytes;
+      } else {
+        // Touch the entry so memory pressure evicts the least recently drawn body.
+        this.sliderCache.delete(o); this.sliderCache.set(o, entry);
+      }
+      c.drawImage(entry.bitmap, entry.x, entry.y, entry.w, entry.h);
     }
 
     drawSpin(c, o, t) {
