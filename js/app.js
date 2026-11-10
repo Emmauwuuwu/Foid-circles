@@ -22,7 +22,9 @@
     },
   };
 
-  const settings = Object.assign({ music: 0.8, sfx: 0.6, offset: 0, scroll: 650, auto: false, nofail: false }, store.get('settings', {}));
+  const settings = Object.assign({ music: 0.8, sfx: 0.6, offset: 0, scroll: 650, auto: false, nofail: false,
+    speed: '1', difficulty: '', fail: '', hidden: false, spunOut: false, flashlight: false, skin: 'original', render: 'native' }, store.get('settings', {}));
+  let importedSkin = null;
   const best = store.get('best', {});
 
   // ---------- Audio graph ----------
@@ -370,7 +372,7 @@
   }
 
   let previewToken = 0, previewSrc = null, previewGain = null, previewTimer = 0;
-  const previewBuffers = new Map();
+  let cachedPreview = null;
   let gestured = false;
 
   function stopPreview(fade = 0.25) {
@@ -395,15 +397,15 @@
     previewTimer = setTimeout(async () => {
       const cacheKey = `${row.id}|${m.audioFile || ''}`;
       try {
-        let buffer = previewBuffers.get(cacheKey);
+        let buffer = cachedPreview?.key === cacheKey ? cachedPreview.buffer : null;
         if (!buffer) {
+          cachedPreview = null;
           if (m.loadAudioBuffer) buffer = await m.loadAudioBuffer();
           else if (m.loadAudioBytes) buffer = await audioCtx.decodeAudioData((await m.loadAudioBytes()).slice().buffer);
           else return;
-          if (previewBuffers.size > 4) previewBuffers.delete(previewBuffers.keys().next().value);
-          previewBuffers.set(cacheKey, buffer);
         }
         if (token !== previewToken || game || P.editor) return;
+        cachedPreview = { key: cacheKey, buffer };
         const dur = buffer.duration;
         let start = m.previewTime > 0 ? m.previewTime / 1000 : dur * 0.35;
         if (start >= dur - 4) start = Math.max(0, dur * 0.35);
@@ -418,6 +420,7 @@
         src.connect(gain);
         gain.connect(analyser);
         gain.connect(musicGain);
+        src.onended = () => { src.disconnect(); gain.disconnect(); };
         src.start(0, start);
         previewSrc = src;
         previewGain = gain;
@@ -456,6 +459,45 @@
     };
     bindCheck('mod-auto', 'auto');
     bindCheck('mod-nofail', 'nofail');
+    bindCheck('mod-hidden', 'hidden');
+    bindCheck('mod-spun-out', 'spunOut');
+    bindCheck('mod-flashlight', 'flashlight');
+    const bindSelect = (id, key) => {
+      const el = $(id);
+      el.value = settings[key];
+      el.addEventListener('change', () => { settings[key] = el.value; store.set('settings', settings); });
+    };
+    bindSelect('mod-speed', 'speed');
+    bindSelect('mod-difficulty', 'difficulty');
+    bindSelect('mod-fail', 'fail');
+    bindSelect('set-skin', 'skin');
+    bindSelect('set-render', 'render');
+    const setImported = (skin, name, select) => {
+      importedSkin = skin;
+      const el = $('set-skin');
+      let option = el.querySelector('[value="imported"]');
+      if (!option) { option = new Option(name, 'imported'); el.add(option); }
+      option.textContent = name;
+      if (select || settings.skin === 'imported') el.value = 'imported';
+    };
+    if (settings.skin === 'imported') $('set-skin').value = 'original';
+    DB.get('assets', 'active-skin').then(async entry => {
+      if (!entry) return;
+      const skin = await P.importSkin(entry.file);
+      if (!importedSkin) setImported(skin, entry.name, false);
+    }).catch(() => {});
+    $('skin-import').addEventListener('change', async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      e.target.disabled = true;
+      try {
+        setImported(await P.importSkin(file), file.name, true);
+        settings.skin = 'imported'; store.set('settings', settings);
+        $('skin-status').textContent = `Loaded ${file.name}`;
+        await DB.put('assets', { id: 'active-skin', name: file.name, file });
+      } catch (err) { $('skin-status').textContent = err.message || 'Could not save this skin.'; }
+      finally { e.target.disabled = false; e.target.value = ''; }
+    });
   }
 
   const drawer = open => {
@@ -467,7 +509,7 @@
 
   // ---------- Play session ----------
 
-  let game = null, currentMap = null, testRun = null;
+  let game = null, currentMap = null, testRun = null, gameGeneration = 0;
   const canvas = $('stage');
 
   function failLoad(message) {
@@ -501,45 +543,81 @@
   const loading = text => { $('loading-text').textContent = text; show('loading'); };
 
   async function play(map) {
+    const generation = ++gameGeneration;
     setNotice('');
     ensureAudio();
     stopPreview();
+    cachedPreview = null;
     currentMap = map;
     testRun = null;
     loading(map.loadAudioBuffer ? `Composing ${map.title}` : `Loading ${map.title}`);
     let assets;
     try {
       await new Promise(r => setTimeout(r, 30));
+      if (generation !== gameGeneration) return;
+      if (map.loadPlayable) map = await map.loadPlayable();
+      if (generation !== gameGeneration) return;
       assets = await loadAssets(map);
     } catch (e) {
-      failLoad(e.message || 'This song could not be loaded.');
+      if (generation === gameGeneration) failLoad(e.message || 'This song could not be loaded.');
       return;
     }
-    if (currentMap !== map) return;
+    if (generation !== gameGeneration) return;
     startGame(map, assets);
   }
 
-  function startGame(map, assets, extra = {}) {
+  async function startGame(map, assets, extra = {}) {
+    const generation = ++gameGeneration;
     if (game) game.destroy();
+    game = null;
+    P.current = null;
+    if (!testRun) currentMap = map;
+    canvas.classList.remove('live');
+    loading(`Preparing ${map.title}`);
+    const mods = extra.mods || {
+      auto: settings.auto, nofail: settings.nofail && !settings.fail,
+      rate: Number(settings.speed), easy: settings.difficulty === 'easy', hardRock: settings.difficulty === 'hardRock',
+      suddenDeath: settings.fail === 'suddenDeath', perfect: settings.fail === 'perfect',
+      hidden: !map.mode && settings.hidden, spunOut: !map.mode && settings.spunOut, flashlight: !map.mode && settings.flashlight,
+    };
+    let session;
+    try {
+      session = P.createSession(canvas, {
+        map: P.moddedMap(map, mods),
+        audioCtx,
+        sfxGain,
+        audioBuffer: assets.audioBuffer,
+        bgImage: assets.bgImage,
+        mods,
+        skin: settings.skin === 'imported' ? importedSkin : P.presetSkin(settings.skin),
+        renderScale: Number(settings.render) || Infinity,
+        offset: settings.offset,
+        scrollMs: settings.scroll,
+        from: extra.from,
+        onEnd: result => (testRun ? endTest(result) : showResults(map, result, assets, mods)),
+      });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (generation !== gameGeneration) { session.destroy(); return; }
+      await session.prepare(() => generation === gameGeneration);
+    } catch (error) {
+      session?.destroy();
+      if (generation === gameGeneration) {
+        const message = error.message || 'Could not prepare this map.';
+        if (testRun && P.editor) { endTest(null); P.editor.toast(message); }
+        else failLoad(message);
+      }
+      return;
+    }
+    if (generation !== gameGeneration) { session.destroy(); return; }
+    game = session;
+    P.current = session;
     show(null);
     canvas.classList.add('live');
-    game = P.createSession(canvas, {
-      map,
-      audioCtx,
-      sfxGain,
-      audioBuffer: assets.audioBuffer,
-      bgImage: assets.bgImage,
-      mods: extra.mods || { auto: settings.auto, nofail: settings.nofail },
-      offset: settings.offset,
-      scrollMs: settings.scroll,
-      from: extra.from,
-      onEnd: result => (testRun ? endTest(result) : showResults(map, result, assets)),
-    });
-    P.current = game;
-    game.start();
+    session.start();
   }
 
   function leaveGame() {
+    gameGeneration++;
     if (testRun) { endTest(null); return; }
     if (game) game.destroy();
     game = null;
@@ -550,10 +628,12 @@
     selectCurrent();
   }
 
-  function showResults(map, r, assets) {
+  function showResults(map, r, assets, mods) {
     canvas.classList.remove('live');
     game = null;
-    const isBest = !r.auto && !r.failed && !(best[map.key] && best[map.key].score >= r.score);
+    P.current = null;
+    const modded = Object.entries(mods).some(([key, value]) => key === 'rate' ? value !== 1 : !!value);
+    const isBest = !modded && !r.failed && !(best[map.key] && best[map.key].score >= r.score);
     if (isBest) {
       best[map.key] = { score: r.score, grade: r.grade, accuracy: r.accuracy };
       store.set('best', best);
@@ -572,7 +652,7 @@
     const total = Math.max(1, r.counts.perfect + r.counts.great + r.counts.ok + r.counts.miss);
     ['perfect', 'great', 'ok', 'miss'].forEach(k => $(`res-bar-${k}`).style.setProperty('--share', `${r.counts[k] / total * 100}%`));
     const off = Math.round(Math.abs(r.meanError));
-    $('res-timing').textContent = r.auto ? "Played by Auto, so this score isn't saved." : off < 1 ? 'Your timing was dead on.' : `On average you hit ${off} ms ${r.meanError > 0 ? 'late' : 'early'}.`;
+    $('res-timing').textContent = modded ? "Scores with mods aren't saved to the unmodded best." : off < 1 ? 'Your timing was dead on.' : `On average you hit ${off} ms ${r.meanError > 0 ? 'late' : 'early'}.`;
     $('res-best').classList.toggle('hidden', !isBest);
     $('res-retry').onclick = () => startGame(map, assets);
     show('results');
@@ -657,6 +737,11 @@
 
     window.addEventListener('keydown', e => {
       if (!game) {
+        if (e.key === 'Escape' && !$('loading').classList.contains('hidden')) {
+          e.preventDefault();
+          leaveGame();
+          return;
+        }
         if (P.editor) return;
         if (!$('results').classList.contains('hidden')) {
           if (e.key === 'Enter') { e.preventDefault(); $('res-retry').click(); }
@@ -779,7 +864,7 @@
     const row = currentRow();
     if (!row) return;
     const v = currentVersion();
-    const m = v.get();
+    let m = v.get();
     if (row.kind === 'project') { openProject(row.project); return; }
 
     const existing = library.find(r => r.kind === 'project' && r.project.sourceKey === v.key);
@@ -789,6 +874,7 @@
     stopPreview();
     loading(`Copying ${m.title}`);
     try {
+      if (m.loadPlayable) m = await m.loadPlayable();
       const id = newId();
       const copy = P.parseBeatmapText(P.serializeMap({ ...m, keys: m.keys || 4 }), { allowEmpty: true });
       copy.raw.metadata.BeatmapID = 0;
@@ -877,6 +963,7 @@
   }
 
   function endTest(result) {
+    gameGeneration++;
     const r = testRun;
     testRun = null;
     if (game) game.destroy();

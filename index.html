@@ -86,6 +86,17 @@
     <label class="slide"><span class="slide-top"><span>Hit sounds</span><output id="set-sfx-val"></output></span><input type="range" id="set-sfx" min="0" max="1" step="0.05"></label>
     <label class="slide"><span class="slide-top"><span>Audio offset</span><output id="set-offset-val"></output></span><input type="range" id="set-offset" min="-150" max="150" step="5"><small>If you always hit late, raise this. If early, lower it.</small></label>
     <h3>Gameplay</h3>
+    <label class="slide">Render resolution <select id="set-render"><option value="native">Native</option><option value="1">Performance (1×)</option><option value="0.75">Performance (0.75×)</option></select><small>Lower resolution can help sustain high refresh rates.</small></label>
+    <label class="slide">Speed <select id="mod-speed"><option value="1">Normal</option><option value="0.75">Half Time</option><option value="1.5">Double Time</option><option value="2">Double Time (2×)</option></select></label>
+    <label class="slide">Difficulty <select id="mod-difficulty"><option value="">Normal</option><option value="easy">Easy</option><option value="hardRock">Hard Rock</option></select></label>
+    <label class="slide">Fail condition <select id="mod-fail"><option value="">Normal</option><option value="suddenDeath">Sudden Death</option><option value="perfect">Perfect</option></select></label>
+    <label><input type="checkbox" id="mod-hidden"> Hidden (Standard)</label>
+    <label><input type="checkbox" id="mod-flashlight"> Flashlight (Standard)</label>
+    <label><input type="checkbox" id="mod-spun-out"> Spun Out (Standard)</label>
+    <h3>Standard skins</h3>
+    <label class="slide">Skin <select id="set-skin"><option value="original">Foid</option><option value="classic">Classic</option><option value="neon">Neon</option></select></label>
+    <label class="slide">Import osu! skin (.osk) <input type="file" id="skin-import" accept=".osk"></label>
+    <output id="skin-status" role="status"></output>
     <label class="slide"><span class="slide-top"><span>Mania scroll time</span><output id="set-scroll-val"></output></span><input type="range" id="set-scroll" min="250" max="1500" step="25"><small>Lower means faster notes.</small></label>
     <h3>Controls</h3>
     <dl class="ctl">
@@ -286,13 +297,14 @@
   </div>
 </section>
 
-<script src="js/mapformat.js"></script>
+<script src="js/mapformat.js?v=lazy-maps1"></script>
 <script src="js/mapwrite.js"></script>
 <script src="js/music.js"></script>
-<script src="js/game.js"></script>
+<script src="js/game.js?v=lazy-maps1"></script>
 <script src="js/modes.js"></script>
 <script src="js/art.js"></script>
 <script src="js/editor.js"></script>
-<script src="js/app.js"></script>
+<script src="js/customize.js?v=skin3"></script>
+<script src="js/app.js?v=lazy-maps1"></script>
 </body>
 </html>

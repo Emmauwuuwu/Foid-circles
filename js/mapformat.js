@@ -5,6 +5,9 @@
   // ---------- Path geometry ----------
 
   function bezier(pts, steps) {
+    // Two control points describe a straight line. Intermediate samples only
+    // duplicate its geometry and can dominate memory on Aspire maps.
+    if (pts.length === 2) return pts;
     const out = [];
     for (let s = 0; s <= steps; s++) {
       const u = s / steps;
@@ -138,6 +141,7 @@
   // Position of the slider ball at song time t, accounting for repeats.
   function sliderPos(o, t) {
     const span = (o.endT - o.t) / o.slides;
+    if (!(span > 0)) return o.path.pts[0];
     const prog = Math.max(0, Math.min(o.slides, (t - o.t) / span));
     let leg = Math.floor(prog), frac = prog - leg;
     if (leg >= o.slides) { leg = o.slides - 1; frac = 1; }
@@ -261,6 +265,15 @@
         o.extras = f[5] || '';
       } else if (type & 2) {
         if (f.length < 7) continue;
+        const given = parseFloat(f[7]);
+        const slides = Math.max(1, parseInt(f[6], 10) || 1);
+        if (opts.summary) {
+          if (Number.isFinite(given) && given > 0 && beat > 0 && multiplier > 0) {
+            o.endT = t + given / (multiplier * 100 * sv) * beat * slides;
+          }
+          objects.push({ t, endT: o.endT });
+          continue;
+        }
         const parts = f[5].split('|');
         // A letter partway through the points starts a new curve segment at the previous point.
         const segments = [{ kind: parts[0][0], points: [[x, y]] }];
@@ -273,8 +286,6 @@
           const xy = c.split(':').map(Number);
           if (xy.length === 2 && xy.every(Number.isFinite)) seg.points.push(xy);
         }
-        const given = parseFloat(f[7]);
-        const slides = Math.max(1, parseInt(f[6], 10) || 1);
         const path = segments.some(g => g.points.length > 1) ? makeSegmentedPath(segments, given > 0 ? given : null) : null;
         if (!path || !(path.length > 0) || !(beat > 0)) { o.type = 'tap'; objects.push(o); continue; }
         o.type = 'slider';
@@ -294,7 +305,7 @@
       objects.push(o);
     }
     if (!objects.length && !opts.allowEmpty) throw new Error('No playable objects in this file');
-    map.objects = finalizeObjects(objects);
+    map.objects = opts.summary ? objects : finalizeObjects(objects);
     return map;
   }
 
@@ -310,26 +321,35 @@
     const view = new DataView(buffer);
     let eocd = -1;
     for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 66000); i--) {
-      if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+      if (view.getUint32(i, true) === 0x06054b50 && i + 22 + view.getUint16(i + 20, true) === bytes.length) {
+        eocd = i;
+        break;
+      }
     }
     if (eocd < 0) throw new Error('Not a valid .osz archive');
     const count = view.getUint16(eocd + 10, true);
     let p = view.getUint32(eocd + 16, true);
+    const centralEnd = p + view.getUint32(eocd + 12, true);
+    const corrupt = () => new Error('Corrupt beatmap or skin archive');
+    if (centralEnd > eocd) throw corrupt();
     const decoder = new TextDecoder();
     const files = new Map();
     for (let i = 0; i < count; i++) {
-      if (view.getUint32(p, true) !== 0x02014b50) throw new Error('Corrupt .osz archive');
+      if (p + 46 > centralEnd || view.getUint32(p, true) !== 0x02014b50) throw corrupt();
       const method = view.getUint16(p + 10, true);
       const compSize = view.getUint32(p + 20, true);
       const nameLen = view.getUint16(p + 28, true);
       const extraLen = view.getUint16(p + 30, true);
       const commentLen = view.getUint16(p + 32, true);
       const local = view.getUint32(p + 42, true);
+      if (p + 46 + nameLen + extraLen + commentLen > centralEnd) throw corrupt();
       const name = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLen));
       p += 46 + nameLen + extraLen + commentLen;
       if (name.endsWith('/')) continue;
       if (method !== 0 && method !== 8) continue;
+      if (local + 30 > eocd || view.getUint32(local, true) !== 0x04034b50) throw corrupt();
       const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+      if (start + compSize > eocd) throw corrupt();
       const data = bytes.subarray(start, start + compSize);
       // Inflated lazily: audio and images are large and most files are never needed.
       files.set(name.toLowerCase(), { name, get: () => method === 0 ? Promise.resolve(data) : inflateRaw(data) });
@@ -350,15 +370,26 @@
     const errors = [];
     const asset = fname => files.get(String(fname).replace(/\\/g, '/').toLowerCase());
     const audioFiles = [...files.entries()].filter(([k]) => /\.(mp3|ogg|wav|flac|m4a|aac|opus)$/.test(k)).map(e => e[1]);
+    const decoder = new TextDecoder(), encoder = new TextEncoder();
+    // Detach metadata strings from the potentially very large decoded chart.
+    const copyText = value => decoder.decode(encoder.encode(value));
     for (const [key, entry] of files) {
       if (!key.endsWith('.osu')) continue;
       try {
-        const map = parseBeatmapText(new TextDecoder().decode(await entry.get()));
+        const { raw, timing, ...map } = parseBeatmapText(decoder.decode(await entry.get()), { summary: true });
+        map.objects = map.objects.map(({ t, endT }) => ({ t, endT }));
+        for (const key of ['title', 'artist', 'creator', 'version', 'audioFile', 'bgFile']) {
+          if (map[key]) map[key] = copyText(map[key]);
+        }
         const audio = asset(map.audioFile) || (audioFiles.length === 1 ? audioFiles[0] : null);
         const bg = map.bgFile && asset(map.bgFile);
         map.loadAudioBytes = audio ? () => audio.get() : null;
         map.silent = !audio;
         map.loadBgBytes = bg ? () => bg.get() : null;
+        map.loadPlayable = async () => ({
+          ...parseBeatmapText(decoder.decode(await entry.get())),
+          key: map.key, loadAudioBytes: map.loadAudioBytes, loadBgBytes: map.loadBgBytes, silent: map.silent,
+        });
         maps.push(map);
       } catch (e) { errors.push(e.message); }
     }
