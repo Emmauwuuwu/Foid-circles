@@ -3,12 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Foid circles</title>
-<link rel="stylesheet" href="css/style.css">
+<title>ica osu webport</title>
+<meta name="theme-color" content="#e71908">
+<link rel="icon" href="assets/ica.png" type="image/png">
+<link rel="stylesheet" href="css/style.css?v=ica6">
 </head>
 <body>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="ica-logo-ink" color-interpolation-filters="sRGB">
+    <feColorMatrix type="matrix" values="0 0 0 0 .91  0 0 0 0 .09  0 0 0 0 .03  0 -1.02 0 0 1"/>
+  </filter>
   <symbol id="i-hex" viewBox="0 0 24 24"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z" fill="currentColor"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15L20 12z" fill="currentColor"/></symbol>
   <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 4.5h4.5v15H6zM13.5 4.5H18v15h-4.5z" fill="currentColor"/></symbol>
@@ -34,7 +39,7 @@
 <!-- ============ Song select ============ -->
 <section id="menu" class="screen hidden">
   <header class="topbar">
-    <div class="logo"><svg class="i"><use href="#i-hex"/></svg><span>Foid circles</span></div>
+    <div class="logo"><span class="logo-mark"><img src="assets/ica.png" alt="" width="76" height="76"></span><span>ica osu webport</span></div>
     <label class="search">
       <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
       <input id="search" type="search" placeholder="Search songs" aria-label="Search songs" autocomplete="off">
@@ -64,6 +69,7 @@
       <div class="actions">
         <button class="play" id="btn-play"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Play<kbd>Enter</kbd></button>
         <button class="btn big" id="btn-edit"><span id="btn-edit-label">Edit</span><kbd>E</kbd></button>
+        <button class="btn big hidden" id="btn-replay">Watch saved replay</button>
         <div class="mods">
           <label class="switch"><input type="checkbox" id="mod-nofail"><span class="track"></span><span>No fail</span></label>
           <label class="switch"><input type="checkbox" id="mod-auto"><span class="track"></span><span>Auto</span></label>
@@ -81,12 +87,15 @@
       <h2>Settings</h2>
       <button class="btn" id="settings-close">Done</button>
     </div>
+    <h3>Appearance</h3>
+    <label class="slide">Theme <select id="set-theme"><option value="light">Light</option><option value="dark">Dark</option><option value="oled">OLED black</option></select></label>
     <h3>Sound</h3>
     <label class="slide"><span class="slide-top"><span>Music</span><output id="set-music-val"></output></span><input type="range" id="set-music" min="0" max="1" step="0.05"></label>
     <label class="slide"><span class="slide-top"><span>Hit sounds</span><output id="set-sfx-val"></output></span><input type="range" id="set-sfx" min="0" max="1" step="0.05"></label>
     <label class="slide"><span class="slide-top"><span>Audio offset</span><output id="set-offset-val"></output></span><input type="range" id="set-offset" min="-150" max="150" step="5"><small>If you always hit late, raise this. If early, lower it.</small></label>
     <h3>Gameplay</h3>
-    <label class="slide">Render resolution <select id="set-render"><option value="native">Native</option><option value="1">Performance (1×)</option><option value="0.75">Performance (0.75×)</option></select><small>Lower resolution can help sustain high refresh rates.</small></label>
+    <label class="slide">Render resolution <select id="set-render"><option value="native">Native</option><option value="1">Performance (1×)</option><option value="0.75">Performance (0.75×)</option></select><small>0.75× also simplifies the playfield backdrop and connectors.</small></label>
+    <label class="slide"><input type="checkbox" id="set-frame-time"> Frame-time graph <small>Shows time between frames. The yellow line marks the 4.17 ms target for 240 FPS.</small></label>
     <label class="slide">Speed <select id="mod-speed"><option value="1">Normal</option><option value="0.75">Half Time</option><option value="1.5">Double Time</option><option value="2">Double Time (2×)</option></select></label>
     <label class="slide">Difficulty <select id="mod-difficulty"><option value="">Normal</option><option value="easy">Easy</option><option value="hardRock">Hard Rock</option></select></label>
     <label class="slide">Fail condition <select id="mod-fail"><option value="">Normal</option><option value="suddenDeath">Sudden Death</option><option value="perfect">Perfect</option></select></label>
@@ -197,8 +206,11 @@
       <p class="res-timing" id="res-timing"></p>
       <div class="actions">
         <button class="play" id="res-retry"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Play again<kbd>Enter</kbd></button>
+        <button class="btn big hidden" id="res-watch">Watch replay</button>
+        <button class="btn big hidden" id="res-save-replay" title="Keep one replay per difficulty on this browser">Save replay</button>
         <button class="btn big" id="res-back">Back to songs<kbd>Esc</kbd></button>
       </div>
+      <p class="res-timing" id="res-replay-status" role="status" hidden></p>
     </div>
   </div>
 </section>
@@ -300,11 +312,11 @@
 <script src="js/mapformat.js?v=lazy-maps1"></script>
 <script src="js/mapwrite.js"></script>
 <script src="js/music.js"></script>
-<script src="js/game.js?v=lazy-maps1"></script>
+<script src="js/game.js?v=replay1"></script>
 <script src="js/modes.js"></script>
-<script src="js/art.js"></script>
+<script src="js/art.js?v=ica6"></script>
 <script src="js/editor.js"></script>
 <script src="js/customize.js?v=skin3"></script>
-<script src="js/app.js?v=lazy-maps1"></script>
+<script src="js/app.js?v=replay1"></script>
 </body>
 </html>

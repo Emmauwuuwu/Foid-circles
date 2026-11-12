@@ -4,6 +4,7 @@
 
   const COLORS = ['#d8ff3e', '#ff7a66', '#5eead4', '#a5b4fc'];
   const FRAME_INTERVAL = 1000 / 240;
+  const REPLAY_LIMIT = 600000;
   const JUDGE = {
     perfect: { value: 300, label: 'Perfect', color: '#d8ff3e', heal: 0.035 },
     great: { value: 100, label: 'Great', color: '#ffd479', heal: 0.015 },
@@ -100,6 +101,14 @@
       this.onEnd = opts.onEnd;
 
       this.opts = opts;
+      this.replay = opts.replay || null;
+      this.replayIndex = 0;
+      this.recording = opts.recordReplay ? [] : null;
+      if (opts.frameTime) {
+        this.frameTimes = new Float32Array(120);
+        this.frameTimeIndex = 0;
+        this.frameTimeCount = 0;
+      }
       this.setup();
       this.lastT = this.objects.reduce((v, o) => Math.max(v, o.endT || o.t), 0);
 
@@ -172,6 +181,10 @@
     }
 
     time() {
+      return this.inputTime ?? this.clockTime();
+    }
+
+    clockTime() {
       return ((this.ctx.currentTime - this.startAt) * 1000 - this.offset - (this.latency || 0)) * this.rate;
     }
 
@@ -189,24 +202,27 @@
     pause() {
       if (this.paused || this.ended) return;
       this.paused = true;
-      clearTimeout(this.frameTimer);
+      this.stopFrameLoop();
       this.ctx.suspend();
     }
 
     resume() {
       if (!this.paused || this.ended) return;
       this.paused = false;
-      this.prevT = null;
+      if (!this.replay) this.prevT = null;
       this.fpsSampleStart = null;
       this.fpsLabel = null;
       this.nextFrameAt = null;
+      this.previousFrameStart = null;
+      this.frameTimeIndex = 0;
+      this.frameTimeCount = 0;
       this.ctx.resume();
       this.frame();
     }
 
     destroy() {
       this.ended = true;
-      clearTimeout(this.frameTimer);
+      this.stopFrameLoop();
       this.stopSource();
       if (this.ctx.state === 'suspended') this.ctx.resume();
     }
@@ -221,6 +237,80 @@
     pointerPress(e, id) {
       this.setCursorScreen(e.clientX, e.clientY);
       this.press(id);
+    }
+
+    record(entry) {
+      if (this.recording.length < REPLAY_LIMIT) this.recording.push(entry);
+      else this.recording = null;
+    }
+
+    input(action, ...args) {
+      if (this.replay || (this.paused && action !== 'clear' && action !== 'move')) return;
+      if (this.mods.auto && action !== 'skip' && action !== 'clear') return;
+      const time = this.time();
+      if (this.recording) {
+        let event = [time, action, ...args];
+        if (action === 'move') {
+          if (!this.map.mode || (this.map.mode === 2 && this.touchId != null)) {
+            const [x, y] = args;
+            event = [time, action, (x - this.ox) / this.s, (y - this.oy) / this.s];
+            // Simulation and presses only observe the most recent consecutive move.
+            if (this.recording.at(-1)?.[1] === 'move') this.recording.pop();
+          } else event = null;
+        } else if (action === 'pointer') {
+          const [e, id] = args;
+          const g = this.map.mode === 3 ? this.geom() : null;
+          const x = g ? clamp(Math.floor((e.clientX - g.x0) / g.cw), 0, this.keys - 1) + 0.5
+            : this.map.mode === 1 ? e.clientX / this.W : (e.clientX - this.ox) / this.s;
+          event = [time, action, id, x, (e.clientY - this.oy) / this.s, e.button, e.pointerType];
+        }
+        if (event) this.record(event);
+      }
+      this.inputTime = time;
+      try {
+        if (action === 'move') this.setCursorScreen(...args);
+        if (action === 'pointer') this.pointerPress(...args);
+        if (action === 'press') this.press(...args);
+        if (action === 'release') this.release(...args);
+        if (action === 'clear') this.releaseAll();
+        if (action === 'skip') this.skip();
+      } finally {
+        this.inputTime = null;
+      }
+    }
+
+    replayStep() {
+      const entries = this.replay.events;
+      let now = this.clockTime();
+      // Bound catch-up work after a stalled or backgrounded tab.
+      const end = Math.min(entries.length, this.replayIndex + 600);
+      while (!this.ended && this.replayIndex < end) {
+        const entry = entries[this.replayIndex];
+        const t = typeof entry === 'number' ? entry : entry[0];
+        if (t > now) break;
+        this.replayIndex++;
+        this.inputTime = t;
+        try {
+          if (typeof entry === 'number') {
+            this.simulateFrame(t);
+            continue;
+          }
+          const [, action, a, b, y, button, pointerType] = entry;
+          if (action === 'move') this.setCursorScreen(this.ox + a * this.s, this.oy + b * this.s);
+          if (action === 'press') this.press(a);
+          if (action === 'release') this.release(a);
+          if (action === 'clear') { this.releaseAll(); this.prevT = null; }
+          if (action === 'skip') { this.skip(); now = this.clockTime(); }
+          if (action === 'pointer') {
+            const g = this.map.mode === 3 ? this.geom() : null;
+            const clientX = g ? g.x0 + b * g.cw : this.map.mode === 1 ? b * this.W : this.ox + b * this.s;
+            this.pointerPress({ clientX, clientY: this.oy + y * this.s, button, pointerType }, a);
+          }
+        } finally {
+          this.inputTime = null;
+        }
+      }
+      if (!this.ended && this.replayIndex === entries.length) this.finish(this.replay.failed);
     }
 
     // ---------- Scoring ----------
@@ -300,7 +390,7 @@
     finish(failed) {
       if (this.ended) return;
       this.ended = true;
-      clearTimeout(this.frameTimer);
+      this.stopFrameLoop();
       if (failed) {
         const now = this.ctx.currentTime;
         this.gain.gain.setValueAtTime(this.gain.gain.value, now);
@@ -325,9 +415,35 @@
 
     // ---------- Rendering ----------
 
+    stopFrameLoop() {
+      clearTimeout(this.frameTimer);
+      if (this.frameChannel) {
+        this.frameChannel.port1.close();
+        this.frameChannel.port2.close();
+        this.frameChannel = null;
+      }
+    }
+
+    scheduleFrame(delay) {
+      if (!this.frameChannel) {
+        this.frameChannel = new MessageChannel();
+        this.frameChannel.port1.onmessage = this.frame;
+      }
+      const { port2 } = this.frameChannel;
+      // Dispatch drawing as a message task so consecutive frames don't inherit
+      // the browser's minimum delay for deeply nested timers.
+      this.frameTimer = setTimeout(() => port2.postMessage(null), Math.max(0, Math.round(delay)));
+    }
+
     step() {
       if (this.ended || this.paused) return;
+      if (this.replay) { this.replayStep(); return; }
       const t = this.time();
+      if (this.recording) this.record(t);
+      this.simulateFrame(t);
+    }
+
+    simulateFrame(t) {
       const dt = this.prevT == null ? 0 : Math.max(0, Math.min(250, t - this.prevT));
       this.prevT = t;
       this.update(t, dt);
@@ -338,6 +454,14 @@
       const now = performance.now();
       this.step();
       if (this.ended) return;
+      if (this.frameTimes) {
+        if (this.previousFrameStart != null) {
+          this.frameTimes[this.frameTimeIndex] = now - this.previousFrameStart;
+          this.frameTimeIndex = (this.frameTimeIndex + 1) % this.frameTimes.length;
+          this.frameTimeCount = Math.min(this.frameTimeCount + 1, this.frameTimes.length);
+        }
+        this.previousFrameStart = now;
+      }
       if (this.fpsSampleStart == null) {
         this.fpsSampleStart = now;
         this.fpsFrames = 0;
@@ -354,10 +478,10 @@
       const afterDraw = performance.now();
       if (this.mods.auto) {
         this.frameCost = (this.frameCost ?? 0) * 0.9 + (afterDraw - now) * 0.1;
-        if (this.frameCost > 8) {
+        if (this.frameCost > FRAME_INTERVAL * 0.85) {
           this.autoLowDetail = true;
           this.detailRecoveryAt = afterDraw + 1500;
-        } else if (this.frameCost < 4 && afterDraw > (this.detailRecoveryAt || 0)) {
+        } else if (this.frameCost < FRAME_INTERVAL * 0.55 && afterDraw > (this.detailRecoveryAt || 0)) {
           this.autoLowDetail = false;
         }
       }
@@ -367,7 +491,7 @@
         deadline += (Math.floor((afterDraw - deadline) / FRAME_INTERVAL) + 1) * FRAME_INTERVAL;
       }
       this.nextFrameAt = deadline;
-      this.frameTimer = setTimeout(this.frame, Math.ceil(deadline - afterDraw));
+      this.scheduleFrame(deadline - afterDraw);
     }
 
     draw(t) {
@@ -385,7 +509,7 @@
       const { W, H } = this;
       c.fillStyle = '#09080d';
       c.fillRect(0, 0, W, H);
-      if (this.autoLowDetail) return;
+      if (this.autoLowDetail || this.opts.renderScale < 1) return;
       if (this.bg) {
         const k = Math.max(W / this.bg.width, H / this.bg.height);
         c.globalAlpha = 0.22;
@@ -429,6 +553,33 @@
       }
     }
 
+    drawFrameTimes(c) {
+      const samples = this.frameTimes;
+      const count = this.frameTimeCount;
+      const right = this.W - 20;
+      const left = right - samples.length;
+      const bottom = 144;
+      const height = 34;
+      const scale = height / 20;
+      let peak = 0;
+
+      c.fillStyle = 'rgba(10,12,18,0.8)';
+      c.fillRect(left - 6, bottom - height - 20, samples.length + 12, height + 24);
+      c.beginPath();
+      for (let i = 0; i < count; i++) {
+        const ms = samples[(this.frameTimeIndex - count + i + samples.length) % samples.length];
+        const bar = Math.min(height, ms * scale);
+        c.rect(right - count + i, bottom - bar, 1, bar);
+        peak = Math.max(peak, ms);
+      }
+      c.fillStyle = '#5eead4';
+      c.fill();
+      c.fillStyle = '#ffd479';
+      c.fillRect(left, bottom - FRAME_INTERVAL * scale, samples.length, 1);
+      c.fillStyle = '#f5f7fb';
+      c.fillText(count ? `Peak ${peak.toFixed(1)} ms` : 'Frame time', right, bottom - height - 15);
+    }
+
     drawHud(c, t) {
       const { W, H } = this;
       const font = (w, px) => `${w} ${px}px "Bahnschrift", "DIN Alternate", "Segoe UI", system-ui, sans-serif`;
@@ -449,6 +600,11 @@
       c.fillText(`${(this.accuracy() * 100).toFixed(2)}%`, W - 20, 52);
       c.font = font(500, 13);
       c.fillText(this.fpsLabel || '— FPS', W - 20, 76);
+      if (this.frameTimes) this.drawFrameTimes(c);
+      if (this.replay) {
+        c.textAlign = 'left';
+        c.fillText('Replay', 20, 34);
+      }
 
       c.textAlign = 'left';
       c.textBaseline = 'bottom';
@@ -488,7 +644,7 @@
       c.fillStyle = 'rgba(216,255,62,0.7)';
       c.fillRect(0, H - 3, W * clamp(t / songEnd, 0, 1), 3);
 
-      if (this.canSkip(t)) {
+      if (!this.replay && this.canSkip(t)) {
         c.textAlign = 'center';
         c.textBaseline = 'middle';
         c.font = font(600, 20);
@@ -787,7 +943,7 @@
         if (o.t - this.preempt > t) break;
         if (!o.done) visible.push(o);
       }
-      if (!this.autoLowDetail) this.drawConnectors(c, visible, t);
+      if (!this.autoLowDetail && !(this.opts.renderScale < 1)) this.drawConnectors(c, visible, t);
       for (let i = visible.length - 1; i >= 0; i--) {
         const o = visible[i];
         if (o.type === 'spin') this.drawSpin(c, o, t);

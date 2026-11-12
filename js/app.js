@@ -22,22 +22,19 @@
     },
   };
 
-  const settings = Object.assign({ music: 0.8, sfx: 0.6, offset: 0, scroll: 650, auto: false, nofail: false,
-    speed: '1', difficulty: '', fail: '', hidden: false, spunOut: false, flashlight: false, skin: 'original', render: 'native' }, store.get('settings', {}));
+  const settings = Object.assign({ music: 0.8, sfx: 0.6, offset: 0, scroll: 650, auto: false, nofail: false, darkMode: false,
+    speed: '1', difficulty: '', fail: '', hidden: false, spunOut: false, flashlight: false, skin: 'original', render: 'native', frameTime: false }, store.get('settings', {}));
   let importedSkin = null;
   const best = store.get('best', {});
 
   // ---------- Audio graph ----------
 
-  let audioCtx = null, musicGain = null, sfxGain = null, analyser = null;
+  let audioCtx = null, musicGain = null, sfxGain = null;
   function ensureAudio() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       musicGain = audioCtx.createGain();
       sfxGain = audioCtx.createGain();
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.6;
       musicGain.connect(audioCtx.destination);
       sfxGain.connect(audioCtx.destination);
       P.musicOut = musicGain;
@@ -52,12 +49,13 @@
   const DB = {
     open() {
       return new Promise((res, rej) => {
-        const r = indexedDB.open('pulsar', 2);
+        const r = indexedDB.open('pulsar', 3);
         r.onupgradeneeded = () => {
           const db = r.result;
           if (!db.objectStoreNames.contains('sets')) db.createObjectStore('sets', { keyPath: 'name' });
           if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
           if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'id' });
+          if (!db.objectStoreNames.contains('replays')) db.createObjectStore('replays', { keyPath: 'key' });
         };
         r.onsuccess = () => res(r.result);
         r.onerror = () => rej(r.error);
@@ -76,29 +74,23 @@
     put(store, value) { return this.run(store, 'readwrite', s => s.put(value)); },
     remove(store, key) { return this.run(store, 'readwrite', s => s.delete(key)); },
     get(store, key) { return this.run(store, 'readonly', s => s.get(key)); },
+    has(store, key) { return this.run(store, 'readonly', s => s.getKey(key)).then(result => result !== undefined); },
     all(store) { return this.run(store, 'readonly', s => s.getAll()); },
   };
 
   // ---------- Library ----------
 
-  // Rows: { id, kind, title, artist, sub, accent, versions: [{ label, key, get(), modeTag }], setName?, project? }
+  // Rows: { id, kind, title, artist, sub, versions: [{ label, key, get(), modeTag }], setName?, project? }
   const library = [];
-  const PALETTE = [[216, 255, 62], [94, 234, 212], [165, 180, 252], [255, 122, 102], [255, 212, 121]];
-  const accentFor = text => {
-    let h = 7;
-    for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
-    return PALETTE[h % PALETTE.length];
-  };
   const modeTagOf = m => ['Standard', 'Taiko', 'Catch', `Mania ${m.keys}K`][m.mode || 0];
 
   function addBuiltins() {
-    const accents = { redline: [255, 77, 94], glasshouse: PALETTE[1], 'night-ferry': PALETTE[2], 'copper-sun': PALETTE[4], 'static-bloom': PALETTE[3] };
     for (const track of P.TRACKS) {
       const versions = (track.versions || Object.keys(P.DIFFS)).map(label => {
         let map = null;
         return { label, key: `builtin:${track.id}:${label}`, modeTag: 'Standard', get: () => (map = map || P.builtinMap(track, label)) };
       });
-      library.push({ id: 'builtin:' + track.id, kind: 'builtin', title: track.title, artist: 'Pulsar Synth', sub: track.mood, bpm: track.bpm, accent: accents[track.id], versions });
+      library.push({ id: 'builtin:' + track.id, kind: 'builtin', title: track.title, artist: 'Pulsar Synth', sub: track.mood, bpm: track.bpm, versions });
     }
   }
 
@@ -107,7 +99,7 @@
     const groups = new Map();
     for (const m of maps) {
       const id = `import:${fileName}:${m.title}`;
-      if (!groups.has(id)) groups.set(id, { id, kind: 'import', title: m.title, artist: m.artist, sub: m.creator ? `Mapped by ${m.creator}` : 'Imported', setName: fileName, accent: accentFor(m.title), versions: [] });
+      if (!groups.has(id)) groups.set(id, { id, kind: 'import', title: m.title, artist: m.artist, sub: m.creator ? `Mapped by ${m.creator}` : 'Imported', setName: fileName, versions: [] });
       m.key = `${id}:${m.version}`;
       groups.get(id).versions.push({ label: m.version, key: m.key, get: () => m, count: m.objects.length, modeTag: modeTagOf(m) });
     }
@@ -153,7 +145,6 @@
       title: m.title,
       artist: m.artist,
       sub: m.creator ? `Your map · by ${m.creator}` : 'Your map',
-      accent: accentFor(rec.id),
       versions: [{ label: m.version, key: m.key, modeTag: modeTagOf(m), get: () => m }],
     };
   }
@@ -237,15 +228,12 @@
       root.append(li);
       return;
     }
-    rows.forEach((row, i) => {
+    rows.forEach(row => {
       const li = document.createElement('li');
       const btn = document.createElement('button');
       btn.className = 'song';
       btn.dataset.row = row.id;
       btn.setAttribute('aria-current', String(row.id === state.rowId));
-      const num = document.createElement('span');
-      num.className = 'num';
-      num.textContent = String(i + 1).padStart(2, '0');
       const title = document.createElement('span');
       title.className = 'song-title';
       title.textContent = row.title;
@@ -253,7 +241,7 @@
       sub.className = 'song-sub';
       const modes = [...new Set(row.versions.map(v => v.modeTag))].join(' · ');
       sub.textContent = `${row.artist}  /  ${modes}`;
-      btn.append(num, title, sub);
+      btn.append(title, sub);
       btn.addEventListener('click', () => selectRow(row));
       li.append(btn);
       root.append(li);
@@ -338,12 +326,17 @@
     }
 
     $('btn-play').disabled = !facts.notes;
+    const replayButton = $('btn-replay');
+    replayButton.classList.add('hidden');
+    DB.has('replays', replayKey(v.key)).then(saved => {
+      if (currentVersion()?.key === v.key) replayButton.classList.toggle('hidden', !saved);
+    }).catch(() => {});
     $('hero-keys').textContent = keyLine(m);
     $('btn-edit-label').textContent = row.kind === 'project' ? 'Edit' : 'Edit a copy';
     $('btn-remove').classList.toggle('hidden', row.kind === 'builtin');
     armRemove(false);
 
-    art.set({ accent: row.accent, bpm: facts.bpm || 120, beatZero: m.beatZero || 0, image: bgCache.get(row.id) || null });
+    art.set({ image: bgCache.get(row.id) || null, beatMs: m.beatMs, beatOrigin: performance.now() });
     loadRowBackground(row, m);
     queuePreview(row, m);
   }
@@ -387,7 +380,6 @@
     gain.gain.setValueAtTime(gain.gain.value, now);
     gain.gain.linearRampToValueAtTime(0, now + fade);
     try { src.stop(now + fade + 0.02); } catch (e) { /* already stopped */ }
-    art.analyser = null;
   }
 
   function queuePreview(row, m) {
@@ -418,16 +410,12 @@
         gain.gain.setValueAtTime(0, audioCtx.currentTime);
         gain.gain.linearRampToValueAtTime(1, audioCtx.currentTime + 0.5);
         src.connect(gain);
-        gain.connect(analyser);
         gain.connect(musicGain);
         src.onended = () => { src.disconnect(); gain.disconnect(); };
         src.start(0, start);
+        art.set({ beatMs: m.beatMs, beatOrigin: performance.now() - (start * 1000 - (m.beatZero || 0)) });
         previewSrc = src;
         previewGain = gain;
-        art.analyser = analyser;
-        // Lock the visual pulse to what is actually playing.
-        const beatMs = m.beatMs || 500;
-        art.set({ bpm: 60000 / beatMs, beatZero: performance.now() - (start * 1000 - (m.beatZero || 0)) });
       } catch (e) { /* the menu stays usable without a preview */ }
     }, 280);
   }
@@ -462,11 +450,20 @@
     bindCheck('mod-hidden', 'hidden');
     bindCheck('mod-spun-out', 'spunOut');
     bindCheck('mod-flashlight', 'flashlight');
+    bindCheck('set-frame-time', 'frameTime');
     const bindSelect = (id, key) => {
       const el = $(id);
       el.value = settings[key];
       el.addEventListener('change', () => { settings[key] = el.value; store.set('settings', settings); });
     };
+    if (!['light', 'dark', 'oled'].includes(settings.theme)) settings.theme = settings.darkMode ? 'dark' : 'light';
+    bindSelect('set-theme', 'theme');
+    const applyTheme = () => {
+      document.documentElement.dataset.theme = settings.theme;
+      art.paint(performance.now());
+    };
+    $('set-theme').addEventListener('change', applyTheme);
+    applyTheme();
     bindSelect('mod-speed', 'speed');
     bindSelect('mod-difficulty', 'difficulty');
     bindSelect('mod-fail', 'fail');
@@ -542,7 +539,22 @@
 
   const loading = text => { $('loading-text').textContent = text; show('loading'); };
 
-  async function play(map) {
+  const replayKey = key => '1:' + key;
+
+  function replayMapHash(map) {
+    let hash = 2166136261;
+    const add = values => {
+      const text = JSON.stringify(values);
+      for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+    };
+    add([map.mode, map.ar, map.od, map.cs, map.hp, map.beatMs, map.tickRate, map.keys]);
+    for (const o of map.objects) {
+      add([o.type, o.t, o.endT, o.x, o.y, o.slides, o.sv, o.beat, o.hitSound, o.segments]);
+    }
+    return hash >>> 0;
+  }
+
+  async function play(map, watchSaved = false) {
     const generation = ++gameGeneration;
     setNotice('');
     ensureAudio();
@@ -551,19 +563,24 @@
     currentMap = map;
     testRun = null;
     loading(map.loadAudioBuffer ? `Composing ${map.title}` : `Loading ${map.title}`);
-    let assets;
+    let assets, replay;
     try {
       await new Promise(r => setTimeout(r, 30));
       if (generation !== gameGeneration) return;
       if (map.loadPlayable) map = await map.loadPlayable();
       if (generation !== gameGeneration) return;
+      if (watchSaved) {
+        replay = await DB.get('replays', replayKey(map.key));
+        if (generation !== gameGeneration) return;
+        if (!replay || replay.mapHash !== replayMapHash(map)) throw new Error('This replay belongs to a different version of the map.');
+      }
       assets = await loadAssets(map);
     } catch (e) {
       if (generation === gameGeneration) failLoad(e.message || 'This song could not be loaded.');
       return;
     }
     if (generation !== gameGeneration) return;
-    startGame(map, assets);
+    startGame(map, assets, { replay });
   }
 
   async function startGame(map, assets, extra = {}) {
@@ -574,7 +591,8 @@
     if (!testRun) currentMap = map;
     canvas.classList.remove('live');
     loading(`Preparing ${map.title}`);
-    const mods = extra.mods || {
+    const replay = extra.replay;
+    const mods = replay?.mods || extra.mods || {
       auto: settings.auto, nofail: settings.nofail && !settings.fail,
       rate: Number(settings.speed), easy: settings.difficulty === 'easy', hardRock: settings.difficulty === 'hardRock',
       suddenDeath: settings.fail === 'suddenDeath', perfect: settings.fail === 'perfect',
@@ -591,10 +609,16 @@
         mods,
         skin: settings.skin === 'imported' ? importedSkin : P.presetSkin(settings.skin),
         renderScale: Number(settings.render) || Infinity,
-        offset: settings.offset,
-        scrollMs: settings.scroll,
+        frameTime: settings.frameTime,
+        offset: replay?.offset ?? settings.offset,
+        scrollMs: replay?.scrollMs ?? settings.scroll,
+        replay,
+        recordReplay: !testRun && !replay,
         from: extra.from,
-        onEnd: result => (testRun ? endTest(result) : showResults(map, result, assets, mods)),
+        onEnd: result => {
+          if (testRun) endTest(result);
+          else showResults(map, result, assets, session);
+        },
       });
       await new Promise(resolve => setTimeout(resolve, 0));
       if (generation !== gameGeneration) { session.destroy(); return; }
@@ -611,6 +635,8 @@
     if (generation !== gameGeneration) { session.destroy(); return; }
     game = session;
     P.current = session;
+    $('btn-retry').textContent = replay ? 'Restart replay' : 'Start over';
+    $('btn-retry').onclick = replay ? () => startGame(map, assets, { replay }) : null;
     show(null);
     canvas.classList.add('live');
     session.start();
@@ -628,12 +654,13 @@
     selectCurrent();
   }
 
-  function showResults(map, r, assets, mods) {
+  function showResults(map, r, assets, session) {
     canvas.classList.remove('live');
     game = null;
     P.current = null;
+    const { mods, replay, recording } = session;
     const modded = Object.entries(mods).some(([key, value]) => key === 'rate' ? value !== 1 : !!value);
-    const isBest = !modded && !r.failed && !(best[map.key] && best[map.key].score >= r.score);
+    const isBest = !replay && !modded && !r.failed && !(best[map.key] && best[map.key].score >= r.score);
     if (isBest) {
       best[map.key] = { score: r.score, grade: r.grade, accuracy: r.accuracy };
       store.set('best', best);
@@ -642,7 +669,7 @@
     $('res-grade').textContent = grade;
     $('res-grade-wrap').dataset.grade = r.grade;
     $('res-title').textContent = r.failed ? 'Out of health' : map.title;
-    $('res-sub').textContent = `${map.artist} · ${map.title} · ${map.version}${r.auto ? ' · Auto' : ''}`;
+    $('res-sub').textContent = `${map.artist} · ${map.title} · ${map.version}${r.auto ? ' · Auto' : ''}${replay ? ' · Replay' : ''}`;
     $('res-acc').textContent = `${(r.accuracy * 100).toFixed(2)}%`;
     $('res-combo').textContent = `${r.maxCombo}x`;
     $('res-perfect').textContent = r.counts.perfect;
@@ -655,6 +682,35 @@
     $('res-timing').textContent = modded ? "Scores with mods aren't saved to the unmodded best." : off < 1 ? 'Your timing was dead on.' : `On average you hit ${off} ms ${r.meanError > 0 ? 'late' : 'early'}.`;
     $('res-best').classList.toggle('hidden', !isBest);
     $('res-retry').onclick = () => startGame(map, assets);
+    const watch = $('res-watch'), save = $('res-save-replay'), status = $('res-replay-status');
+    const runReplay = replay || (recording && {
+      key: replayKey(map.key),
+      events: recording,
+      mods,
+      offset: session.offset,
+      scrollMs: session.opts.scrollMs,
+      failed: r.failed,
+    });
+    watch.classList.toggle('hidden', !runReplay);
+    watch.onclick = runReplay ? () => startGame(map, assets, { replay: runReplay }) : null;
+    save.classList.toggle('hidden', !recording);
+    save.disabled = false;
+    status.hidden = !!runReplay;
+    status.textContent = runReplay ? '' : 'This run exceeded the replay recording limit.';
+    save.onclick = !recording ? null : async function saveReplay() {
+      save.disabled = true;
+      status.hidden = false;
+      status.textContent = 'Saving replay…';
+      try {
+        await DB.put('replays', { ...runReplay, mapHash: replayMapHash(map) });
+        if (save.onclick === saveReplay) status.textContent = 'Replay saved on this browser.';
+      } catch {
+        if (save.onclick === saveReplay) {
+          status.textContent = 'Could not save the replay in this browser.';
+          save.disabled = false;
+        }
+      }
+    };
     show('results');
 
     // Count the score up: a little ceremony for the one number people look at.
@@ -724,15 +780,15 @@
       if (!game) return;
       const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
       const last = events.length ? events[events.length - 1] : e;
-      game.setCursorScreen(last.clientX, last.clientY);
+      game.input('move', last.clientX, last.clientY);
     });
     canvas.addEventListener('pointerdown', e => {
       if (!game) return;
       e.preventDefault();
-      game.pointerPress(e, 'p' + e.pointerId + ':' + e.button);
+      game.input('pointer', e, 'p' + e.pointerId + ':' + e.button);
     });
-    window.addEventListener('pointerup', e => { if (game) game.release('p' + e.pointerId + ':' + e.button); });
-    window.addEventListener('pointercancel', e => { if (game) game.release('p' + e.pointerId + ':' + e.button); });
+    window.addEventListener('pointerup', e => { if (game) game.input('release', 'p' + e.pointerId + ':' + e.button); });
+    window.addEventListener('pointercancel', e => { if (game) game.input('release', 'p' + e.pointerId + ':' + e.button); });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
 
     window.addEventListener('keydown', e => {
@@ -744,7 +800,7 @@
         }
         if (P.editor) return;
         if (!$('results').classList.contains('hidden')) {
-          if (e.key === 'Enter') { e.preventDefault(); $('res-retry').click(); }
+          if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); $('res-retry').click(); }
           else if (e.key === 'Escape') { e.preventDefault(); leaveGame(); }
           return;
         }
@@ -757,18 +813,19 @@
         if (game.paused) resumeGame(); else pauseGame();
         return;
       }
-      if (e.repeat || game.paused) return;
+      if (e.repeat || game.paused || game.replay) return;
       // Space skips a long intro first; mania layouts may also use it as a column key.
-      if (e.code === 'Space' && game.canSkip(game.time())) { e.preventDefault(); game.skip(); return; }
-      if (game.usesKey(e.code)) { e.preventDefault(); game.press(e.code); }
+      if (e.code === 'Space' && game.canSkip(game.time())) { e.preventDefault(); game.input('skip'); return; }
+      if (game.usesKey(e.code)) { e.preventDefault(); game.input('press', e.code); }
     });
-    window.addEventListener('keyup', e => { if (game) game.release(e.code); });
+    window.addEventListener('keyup', e => { if (game) game.input('release', e.code); });
     window.addEventListener('resize', () => { if (game) game.resize(); });
     // Losing focus mid-song would otherwise cost a run while the player is away.
     window.addEventListener('blur', () => { if (game && !game.mods.auto) pauseGame(); });
 
     $('btn-resume').addEventListener('click', resumeGame);
     $('btn-retry').addEventListener('click', () => {
+      if (game?.replay) return;
       if (testRun) { const run = testRun; startTest(run.map, run.from, run.auto, run.assets); return; }
       const map = currentMap;
       if (game) game.destroy();
@@ -779,6 +836,7 @@
     $('res-back').addEventListener('click', leaveGame);
 
     $('btn-play').addEventListener('click', () => { const v = currentVersion(); if (v) play(v.get()); });
+    $('btn-replay').addEventListener('click', () => { const v = currentVersion(); if (v) play(v.get(), true); });
     $('btn-edit').addEventListener('click', editCurrent);
     $('btn-remove').addEventListener('click', removeCurrent);
     $('btn-settings').addEventListener('click', () => drawer(true));
@@ -807,7 +865,7 @@
   function pauseGame() {
     if (!game || game.paused) return;
     game.pause();
-    game.releaseAll();
+    game.input('clear');
     canvas.classList.remove('live');
     $('pause-song').textContent = currentMap ? `${currentMap.title} · ${currentMap.version}` : '';
     $('btn-quit').textContent = testRun ? 'Back to editor' : 'Quit to songs';
