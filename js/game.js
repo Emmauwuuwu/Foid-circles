@@ -73,6 +73,31 @@
     c.drawImage(sprite, x - width / 2, y - height / 2, width, height);
   }
 
+  function drawSkinSprite(c, skin, sprite, x, y, scale, color, centered = true) {
+    const density = skin.densities.get(sprite) || 1;
+    const width = sprite.width * scale / density, height = sprite.height * scale / density;
+    let image = sprite;
+    if (color && color !== '#ffffff') {
+      let variants = skin.tintCache.get(sprite);
+      if (!variants) skin.tintCache.set(sprite, variants = new Map());
+      image = variants.get(color);
+      if (!image) {
+        image = document.createElement('canvas');
+        image.width = sprite.width;
+        image.height = sprite.height;
+        const tint = image.getContext('2d');
+        tint.fillStyle = color;
+        tint.fillRect(0, 0, image.width, image.height);
+        tint.globalCompositeOperation = 'multiply';
+        tint.drawImage(sprite, 0, 0);
+        tint.globalCompositeOperation = 'destination-in';
+        tint.drawImage(sprite, 0, 0);
+        variants.set(color, image);
+      }
+    }
+    c.drawImage(image, centered ? x - width / 2 : x, centered ? y - height / 2 : y, width, height);
+  }
+
   function gradeFor(acc, failed) {
     if (failed) return 'F';
     if (acc >= 0.999) return 'X';
@@ -130,13 +155,19 @@
     }
 
     resize() {
-      const dpr = Math.min(window.devicePixelRatio || 1, this.opts.renderScale || Infinity);
-      this.dpr = dpr;
       this.W = window.innerWidth;
       this.H = window.innerHeight;
+      const nativeDpr = window.devicePixelRatio || 1;
+      const wallpaperRender = this.opts.wallpaperRender;
+      // Limit supersampling on large monitors to keep the canvas allocation bounded.
+      const dpr = wallpaperRender
+        ? Math.min(nativeDpr * wallpaperRender, 8192 / Math.max(this.W, this.H, 1),
+          Math.sqrt(16000000 / Math.max(1, this.W * this.H)))
+        : Math.min(nativeDpr, this.opts.renderScale || Infinity);
+      this.dpr = dpr;
       this.canvas.width = Math.round(this.W * dpr);
       this.canvas.height = Math.round(this.H * dpr);
-      this.s = Math.min(this.W / 612, this.H / 484);
+      this.s = Math.min(this.W / 612, this.H / 484) * (this.opts.playfieldScale || 1);
       this.ox = (this.W - 512 * this.s) / 2;
       this.oy = (this.H - 384 * this.s) / 2 + 8;
     }
@@ -151,7 +182,7 @@
         // Testing from the editor: a short run-up into the chosen point.
         const runUp = Math.max(1500, this.preempt + 300);
         const begin = this.opts.from - runUp;
-        this.playFrom(this.ctx.currentTime + 0.05 + Math.max(0, -begin) / 1000, Math.max(0, begin) / 1000);
+        this.playFrom(this.ctx.currentTime + 0.05 + Math.max(0, -begin) / (1000 * this.rate), Math.max(0, begin) / 1000);
       } else {
         const lead = Math.max(1500, this.preempt + 500 - first) / 1000;
         this.playFrom(this.ctx.currentTime + lead, 0);
@@ -189,6 +220,7 @@
     }
 
     canSkip(t) {
+      if (this.opts.practiceEnd != null) return false;
       return this.first === 0 && this.objects[0].t - t > this.preempt + 2000;
     }
 
@@ -384,7 +416,9 @@
       if (this.mods.auto || this.mods.nofail) this.health = Math.max(this.health, 0.05);
 
       if (this.modFailed || this.health <= 0) { this.finish(true); return; }
-      if (this.first >= this.objects.length && t > this.lastT + 1200) this.finish(false);
+      if (this.opts.practiceEnd != null) {
+        if (t > Math.max(this.lastT + this.win.ok, this.opts.practiceEnd)) this.finish(false);
+      } else if (this.first >= this.objects.length && t > this.lastT + 1200) this.finish(false);
     }
 
     finish(failed) {
@@ -476,19 +510,20 @@
       }
       this.draw(this.time());
       const afterDraw = performance.now();
+      const interval = FRAME_INTERVAL;
       if (this.mods.auto) {
         this.frameCost = (this.frameCost ?? 0) * 0.9 + (afterDraw - now) * 0.1;
-        if (this.frameCost > FRAME_INTERVAL * 0.85) {
+        if (this.frameCost > interval * 0.85) {
           this.autoLowDetail = true;
           this.detailRecoveryAt = afterDraw + 1500;
-        } else if (this.frameCost < FRAME_INTERVAL * 0.55 && afterDraw > (this.detailRecoveryAt || 0)) {
+        } else if (this.frameCost < interval * 0.55 && afterDraw > (this.detailRecoveryAt || 0)) {
           this.autoLowDetail = false;
         }
       }
-      let deadline = (this.nextFrameAt ?? now) + FRAME_INTERVAL;
+      let deadline = (this.nextFrameAt ?? now) + interval;
       // Skip missed deadlines instead of trying to render a burst of old frames.
       if (deadline <= afterDraw) {
-        deadline += (Math.floor((afterDraw - deadline) / FRAME_INTERVAL) + 1) * FRAME_INTERVAL;
+        deadline += (Math.floor((afterDraw - deadline) / interval) + 1) * interval;
       }
       this.nextFrameAt = deadline;
       this.scheduleFrame(deadline - afterDraw);
@@ -498,7 +533,18 @@
       const c = this.c, d = this.dpr;
       c.setTransform(d, 0, 0, d, 0, 0);
       this.drawBackground(c, t);
-      this.drawPlay(c, t);
+      // Lane modes use screen coordinates. Scale their playfield around the
+      // center while keeping the background and HUD at full size.
+      const laneScale = (this.map.mode === 1 || this.map.mode === 3) && this.opts.playfieldScale;
+      if (laneScale && laneScale !== 1) {
+        c.save();
+        c.translate(this.W * (1 - laneScale) / 2, this.H * (1 - laneScale) / 2);
+        c.scale(laneScale, laneScale);
+        this.drawPlay(c, t);
+        c.restore();
+      } else {
+        this.drawPlay(c, t);
+      }
       this.drawHud(c, t);
       this.drawOverlay(c);
     }
@@ -601,9 +647,9 @@
       c.font = font(500, 13);
       c.fillText(this.fpsLabel || '— FPS', W - 20, 76);
       if (this.frameTimes) this.drawFrameTimes(c);
-      if (this.replay) {
+      if (this.replay || this.opts.practiceEnd != null) {
         c.textAlign = 'left';
-        c.fillText('Replay', 20, 34);
+        c.fillText(this.replay ? 'Replay' : `Practice · ${Math.round(this.rate * 100)}% · R to restart`, 20, 34);
       }
 
       c.textAlign = 'left';
@@ -640,9 +686,10 @@
       c.globalAlpha = 1;
       }
 
-      const songEnd = this.lastT || 1;
+      const songStart = this.opts.practiceEnd != null ? this.opts.from : 0;
+      const songEnd = this.opts.practiceEnd ?? this.lastT;
       c.fillStyle = 'rgba(216,255,62,0.7)';
-      c.fillRect(0, H - 3, W * clamp(t / songEnd, 0, 1), 3);
+      c.fillRect(0, H - 3, W * clamp((t - songStart) / Math.max(1, songEnd - songStart), 0, 1), 3);
 
       if (!this.replay && this.canSkip(t)) {
         c.textAlign = 'center';
@@ -986,10 +1033,12 @@
       const index = o.color % colors.length, color = colors[index], r = this.radius;
       const sliderStart = o.type === 'slider' && this.skin.sliderStart;
       const sprite = sliderStart || this.skin.hitcircle || this.skin.circles?.[index];
-      const overlay = sliderStart ? this.skin.sliderStartOverlay : this.skin.overlay;
+      const overlay = (o.type === 'slider' && this.skin.sliderStartOverlay) || this.skin.overlay;
+      const custom = this.skin.densities;
       c.globalAlpha = this.alphaFor(o, t);
       if (sprite) {
-        drawSprite(c, sprite, o.x, o.y, 2 * r);
+        if (custom) drawSkinSprite(c, this.skin, sprite, o.x, o.y, r / 59, color);
+        else drawSprite(c, sprite, o.x, o.y, 2 * r);
       } else {
         circlePath(c, o.x, o.y, r * 0.94);
         c.fillStyle = color + '88';
@@ -998,7 +1047,33 @@
         c.lineWidth = r * 0.08;
         c.stroke();
       }
-      if (overlay) drawSprite(c, overlay, o.x, o.y, 2 * r);
+      if (overlay && !this.skin.overlayAboveNumber) {
+        drawSkinSprite(c, this.skin, overlay, o.x, o.y, r / 59);
+      }
+      this.drawCircleNumber(c, o, r);
+      if (overlay && this.skin.overlayAboveNumber) {
+        drawSkinSprite(c, this.skin, overlay, o.x, o.y, r / 59);
+      }
+      c.globalAlpha = 1;
+    }
+
+    drawCircleNumber(c, o, r) {
+      const label = String(o.num);
+      if (this.skin.digits) {
+        const digits = Array.from(label, number => this.skin.digits[Number(number)]);
+        if (digits.every(Boolean)) {
+          const scale = r / 59;
+          const overlap = (this.skin.digitOverlap || 0) * scale;
+          const widths = digits.map(sprite => sprite.width * scale / this.skin.densities.get(sprite));
+          const total = widths.reduce((sum, width) => sum + width, 0) - overlap * (digits.length - 1);
+          let x = o.x - total / 2;
+          digits.forEach((sprite, i) => {
+            drawSkinSprite(c, this.skin, sprite, x + widths[i] / 2, o.y, scale);
+            x += widths[i] - overlap;
+          });
+          return;
+        }
+      }
       c.fillStyle = '#f5f7fb';
       c.font = `700 ${r * 0.8}px "Bahnschrift", "DIN Alternate", "Segoe UI", system-ui, sans-serif`;
       c.textAlign = 'center';
@@ -1006,9 +1081,8 @@
       c.strokeStyle = '#161326';
       c.lineWidth = r * 0.06;
       c.lineJoin = 'round';
-      c.strokeText(String(o.num), o.x, o.y + r * 0.04);
-      c.fillText(String(o.num), o.x, o.y + r * 0.04);
-      c.globalAlpha = 1;
+      c.strokeText(label, o.x, o.y + r * 0.04);
+      c.fillText(label, o.x, o.y + r * 0.04);
     }
 
     drawApproach(c, o, t) {
@@ -1017,7 +1091,7 @@
       const radius = this.radius * (0.96 + 2.1 * f);
       c.globalAlpha = clamp(1.15 - f, 0, 1) * this.alphaFor(o, t);
       if (this.skin.approach) {
-        drawSprite(c, this.skin.approach, o.x, o.y, 2 * radius);
+        drawSkinSprite(c, this.skin, this.skin.approach, o.x, o.y, radius / 59, colors[o.color % colors.length]);
       } else {
         circlePath(c, o.x, o.y, radius);
         c.strokeStyle = colors[o.color % colors.length];
@@ -1037,15 +1111,15 @@
       const points = o.path.pts;
       const end = points[points.length - 1];
       const endSprite = this.skin.sliderEnd || this.skin.hitcircle;
-      const endOverlay = this.skin.sliderEnd ? this.skin.sliderEndOverlay : this.skin.overlay;
-      if (endSprite) drawSprite(c, endSprite, end[0], end[1], 2 * r);
+      const endOverlay = this.skin.sliderEndOverlay || this.skin.overlay;
+      if (endSprite) drawSkinSprite(c, this.skin, endSprite, end[0], end[1], r / 59, color);
       else {
         circlePath(c, end[0], end[1], r * 0.65);
         c.strokeStyle = color;
         c.lineWidth = r * 0.08;
         c.stroke();
       }
-      if (endOverlay) drawSprite(c, endOverlay, end[0], end[1], 2 * r);
+      if (endOverlay) drawSkinSprite(c, this.skin, endOverlay, end[0], end[1], r / 59);
       if (!o.headDone) this.drawTarget(c, o, t);
       c.globalAlpha = this.alphaFor(o, t) * 0.92;
       if (o.slides > 1) {
@@ -1057,7 +1131,7 @@
           c.save();
           c.translate(at[0], at[1]);
           c.rotate(Math.atan2(toward[1] - at[1], toward[0] - at[0]));
-          if (this.skin.reverseArrow) drawSprite(c, this.skin.reverseArrow, 0, 0, r * 1.25);
+          if (this.skin.reverseArrow) drawSkinSprite(c, this.skin, this.skin.reverseArrow, 0, 0, r / 59);
           else {
             c.beginPath();
             c.moveTo(-r * 0.2, -r * 0.3); c.lineTo(r * 0.25, 0); c.lineTo(-r * 0.2, r * 0.3);
@@ -1073,7 +1147,7 @@
         const elapsed = (t - o.t) / 1000;
         const ballFrames = this.skin.sliderBallFrames;
         const ball = ballFrames?.length ? ballFrames[Math.floor(elapsed * 60) % ballFrames.length] : null;
-        if (ball) drawSprite(c, ball, p[0], p[1], r * 1.75);
+        if (ball) drawSkinSprite(c, this.skin, ball, p[0], p[1], r / 59);
         else {
           circlePath(c, p[0], p[1], r * 0.58);
           c.fillStyle = color; c.fill();
@@ -1083,7 +1157,7 @@
         const follow = followFrames?.length
           ? followFrames[Math.floor(elapsed * (this.skin.animationFps || followFrames.length)) % followFrames.length]
           : null;
-        if (o.tracking && follow) drawSprite(c, follow, p[0], p[1], r * 4);
+        if (o.tracking && follow) drawSkinSprite(c, this.skin, follow, p[0], p[1], r / 59);
         else if (o.tracking) {
           circlePath(c, p[0], p[1], r * 2);
           c.strokeStyle = '#f5f7fb9c'; c.lineWidth = 2; c.stroke();
@@ -1106,7 +1180,7 @@
       if (o.path.pts.length < 256) { stroke(c); return; }
       let entry = this.sliderCache.get(o);
       if (!entry) {
-        const scale = Math.min(this.s * this.dpr, 2);
+        const scale = Math.min(this.s * this.dpr, this.opts.wallpaperRender > 1 ? 3 : 2);
         pathOf(o);
         const bounds = o.path.bounds;
         const padding = r + 2;
@@ -1170,6 +1244,36 @@
       const sx = this.cursor.x * this.s + this.ox, sy = this.cursor.y * this.s + this.oy;
       this.trail.push([sx, sy]);
       if (this.trail.length > 16) this.trail.shift();
+      if (this.skin.densities && (this.skin.cursor || this.skin.cursorTrail || this.skin.cursorMiddle)) {
+        const scale = this.H / 768;
+        const rotation = this.time() / 1000;
+        const drawPart = (sprite, x, y, angle, size, centered = true) => {
+          c.save();
+          c.translate(x, y);
+          if (angle) c.rotate(angle);
+          drawSkinSprite(c, this.skin, sprite, 0, 0, size, null, centered);
+          c.restore();
+        };
+        if (this.skin.cursorTrail) {
+          this.trail.forEach(([x, y], i) => {
+            c.globalAlpha = i / this.trail.length * 0.55;
+            drawPart(this.skin.cursorTrail, x, y, this.skin.cursorTrailRotate ? rotation : 0, scale);
+          });
+          c.globalAlpha = 1;
+        }
+        if (this.skin.cursor) {
+          const pressed = this.skin.cursorExpand !== false && (this.held.size || this.autoHeld);
+          drawPart(this.skin.cursor, sx, sy, this.skin.cursorRotate !== false ? rotation : 0,
+            scale * (pressed ? 1.25 : 1), this.skin.cursorCentre !== false);
+        }
+        if (this.skin.cursorMiddle) drawPart(this.skin.cursorMiddle, sx, sy, 0, scale);
+        if (!this.skin.cursor && !this.skin.cursorMiddle) {
+          circlePath(c, sx, sy, 3);
+          c.fillStyle = '#f5f7fb';
+          c.fill();
+        }
+        return;
+      }
       this.trail.forEach((p, i) => {
         const k = i / this.trail.length;
         c.globalAlpha = k * 0.35;

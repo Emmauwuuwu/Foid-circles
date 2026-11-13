@@ -11,6 +11,23 @@
     if (art) { if (artOn) art.start(); else art.stop(); }
   };
   let art = null;
+  let wallpaper = false;
+  if (window.icaDesktop) window.icaWallpaper = active => {
+    if (active === wallpaper) return;
+    const selected = (testRun ? null : currentMap) || currentVersion()?.get();
+    wallpaper = active;
+    document.documentElement.classList.toggle('wallpaper', active);
+    if (active) {
+      stopPreview(0);
+      leaveGame();
+      const map = selected?.objects.length ? selected : library[0].versions[0].get();
+      play(map, false, true);
+    } else {
+      leaveGame();
+      if (P.editor) show('editor');
+      if (audioCtx) ensureAudio();
+    }
+  };
 
   const store = {
     get(key, fallback) {
@@ -23,13 +40,28 @@
   };
 
   const settings = Object.assign({ music: 0.8, sfx: 0.6, offset: 0, scroll: 650, auto: false, nofail: false, darkMode: false,
-    speed: '1', difficulty: '', fail: '', hidden: false, spunOut: false, flashlight: false, skin: 'original', render: 'native', frameTime: false }, store.get('settings', {}));
+    speed: '1', difficulty: '', fail: '', hidden: false, spunOut: false, flashlight: false, skin: 'original', render: 'native', frameTime: false, wallpaperSound: false }, store.get('settings', {}));
   let importedSkin = null;
+  settings.wallpaperSize ??= 0.85;
+  settings.wallpaperRender ??= '1';
   const best = store.get('best', {});
 
   // ---------- Audio graph ----------
 
   let audioCtx = null, musicGain = null, sfxGain = null;
+  function updateAudioLevels() {
+    if (!audioCtx) return;
+    const muted = wallpaper && !settings.wallpaperSound;
+    musicGain.gain.value = muted ? 0 : settings.music;
+    sfxGain.gain.value = muted ? 0 : settings.sfx;
+  }
+
+  if (window.icaDesktop) window.icaToggleWallpaperSound = () => {
+    const checkbox = $('set-wallpaper-sound');
+    checkbox.checked = !checkbox.checked;
+    checkbox.dispatchEvent(new Event('change'));
+  };
+
   function ensureAudio() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -39,8 +71,7 @@
       sfxGain.connect(audioCtx.destination);
       P.musicOut = musicGain;
     }
-    musicGain.gain.value = settings.music;
-    sfxGain.gain.value = settings.sfx;
+    updateAudioLevels();
     if (audioCtx.state === 'suspended') audioCtx.resume();
   }
 
@@ -326,6 +357,7 @@
     }
 
     $('btn-play').disabled = !facts.notes;
+    $('btn-practice').disabled = !facts.notes;
     const replayButton = $('btn-replay');
     replayButton.classList.add('hidden');
     DB.has('replays', replayKey(v.key)).then(saved => {
@@ -383,6 +415,7 @@
   }
 
   function queuePreview(row, m) {
+    if (wallpaper) return;
     stopPreview();
     if (!gestured) return;
     const token = previewToken;
@@ -431,7 +464,7 @@
         settings[key] = parseFloat(el.value);
         out.textContent = fmt(settings[key]);
         store.set('settings', settings);
-        if (audioCtx) { musicGain.gain.value = settings.music; sfxGain.gain.value = settings.sfx; }
+        updateAudioLevels();
       });
     };
     const pct = v => `${Math.round(v * 100)}%`;
@@ -446,6 +479,12 @@
       el.addEventListener('change', () => { settings[key] = el.checked; store.set('settings', settings); });
     };
     bindCheck('mod-auto', 'auto');
+    if (window.icaDesktop) {
+      const checkbox = $('set-wallpaper-sound');
+      checkbox.closest('label').classList.remove('hidden');
+      bindCheck('set-wallpaper-sound', 'wallpaperSound');
+      checkbox.addEventListener('change', updateAudioLevels);
+    }
     bindCheck('mod-nofail', 'nofail');
     bindCheck('mod-hidden', 'hidden');
     bindCheck('mod-spun-out', 'spunOut');
@@ -469,6 +508,11 @@
     bindSelect('mod-fail', 'fail');
     bindSelect('set-skin', 'skin');
     bindSelect('set-render', 'render');
+    if (window.icaDesktop) {
+      $('wallpaper-display').classList.remove('hidden');
+      bindRange('set-wallpaper-size', 'wallpaperSize', pct);
+      bindSelect('set-wallpaper-render', 'wallpaperRender');
+    }
     const setImported = (skin, name, select) => {
       importedSkin = skin;
       const el = $('set-skin');
@@ -554,7 +598,7 @@
     return hash >>> 0;
   }
 
-  async function play(map, watchSaved = false) {
+  async function play(map, watchSaved = false, wallpaperRun = false, practice = null) {
     const generation = ++gameGeneration;
     setNotice('');
     ensureAudio();
@@ -576,11 +620,15 @@
       }
       assets = await loadAssets(map);
     } catch (e) {
-      if (generation === gameGeneration) failLoad(e.message || 'This song could not be loaded.');
+      if (generation === gameGeneration) {
+        const fallback = library[0].versions[0].get();
+        if (wallpaperRun && map.key !== fallback.key) play(fallback, false, true);
+        else failLoad(e.message || 'This song could not be loaded.');
+      }
       return;
     }
     if (generation !== gameGeneration) return;
-    startGame(map, assets, { replay });
+    startGame(map, assets, { replay, wallpaperRun, practice });
   }
 
   async function startGame(map, assets, extra = {}) {
@@ -592,31 +640,48 @@
     canvas.classList.remove('live');
     loading(`Preparing ${map.title}`);
     const replay = extra.replay;
-    const mods = replay?.mods || extra.mods || {
+    const wallpaperRun = extra.wallpaperRun;
+    const practice = extra.practice;
+    const mods = practice ? { auto: practice.auto, nofail: true, rate: practice.rate }
+      : wallpaperRun ? { auto: true, nofail: true, rate: 1 } : replay?.mods || extra.mods || {
       auto: settings.auto, nofail: settings.nofail && !settings.fail,
       rate: Number(settings.speed), easy: settings.difficulty === 'easy', hardRock: settings.difficulty === 'hardRock',
       suddenDeath: settings.fail === 'suddenDeath', perfect: settings.fail === 'perfect',
       hidden: !map.mode && settings.hidden, spunOut: !map.mode && settings.spunOut, flashlight: !map.mode && settings.flashlight,
     };
     let session;
+    const restart = () => startGame(map, assets, extra);
     try {
+      let playable = P.moddedMap(map, mods);
+      if (practice) {
+        const objects = playable.objects.filter(o => o.t >= practice.start && o.t <= practice.end);
+        if (!objects.length) throw new Error('There are no notes in that practice range.');
+        playable = { ...playable, objects };
+      }
       session = P.createSession(canvas, {
-        map: P.moddedMap(map, mods),
+        map: playable,
         audioCtx,
         sfxGain,
         audioBuffer: assets.audioBuffer,
         bgImage: assets.bgImage,
         mods,
         skin: settings.skin === 'imported' ? importedSkin : P.presetSkin(settings.skin),
-        renderScale: Number(settings.render) || Infinity,
-        frameTime: settings.frameTime,
+        renderScale: wallpaperRun ? Infinity : Number(settings.render) || Infinity,
+        wallpaperRender: wallpaperRun ? Number(settings.wallpaperRender) : undefined,
+        playfieldScale: wallpaperRun ? settings.wallpaperSize : 1,
+        frameTime: !wallpaperRun && settings.frameTime,
         offset: replay?.offset ?? settings.offset,
         scrollMs: replay?.scrollMs ?? settings.scroll,
         replay,
-        recordReplay: !testRun && !replay,
-        from: extra.from,
+        recordReplay: !practice && !wallpaperRun && !testRun && !replay,
+        from: practice?.start ?? extra.from,
+        practiceEnd: practice?.end,
         onEnd: result => {
-          if (testRun) endTest(result);
+          if (practice) {
+            if (generation === gameGeneration) restart();
+          } else if (wallpaperRun) {
+            if (wallpaper && generation === gameGeneration) startGame(map, assets, { wallpaperRun: true });
+          } else if (testRun) endTest(result);
           else showResults(map, result, assets, session);
         },
       });
@@ -628,6 +693,7 @@
       if (generation === gameGeneration) {
         const message = error.message || 'Could not prepare this map.';
         if (testRun && P.editor) { endTest(null); P.editor.toast(message); }
+        else if (wallpaperRun && map.key !== library[0].versions[0].key) play(library[0].versions[0].get(), false, true);
         else failLoad(message);
       }
       return;
@@ -635,11 +701,13 @@
     if (generation !== gameGeneration) { session.destroy(); return; }
     game = session;
     P.current = session;
-    $('btn-retry').textContent = replay ? 'Restart replay' : 'Start over';
-    $('btn-retry').onclick = replay ? () => startGame(map, assets, { replay }) : null;
+    session.restartPractice = practice ? restart : null;
+    $('btn-retry').textContent = practice ? 'Restart loop' : replay ? 'Restart replay' : 'Start over';
+    $('btn-retry').onclick = replay || practice ? restart : null;
     show(null);
     canvas.classList.add('live');
     session.start();
+    if (wallpaperRun) window.ipc.postMessage('wallpaper-playing');
   }
 
   function leaveGame() {
@@ -766,6 +834,28 @@
   }
 
   function bindInput() {
+    const practiceDialog = $('practice-dialog');
+    $('btn-practice').addEventListener('click', () => {
+      const map = currentVersion()?.get();
+      if (!map?.objects.length) return;
+      $('practice-start').value = 0;
+      $('practice-end').value = Math.ceil(mapFacts(map).length) / 1000;
+      $('practice-error').textContent = '';
+      practiceDialog.showModal();
+    });
+    $('practice-cancel').addEventListener('click', () => practiceDialog.close());
+    $('practice-form').addEventListener('submit', event => {
+      event.preventDefault();
+      const map = currentVersion()?.get();
+      const start = Math.round($('practice-start').valueAsNumber * 1000);
+      const end = Math.round($('practice-end').valueAsNumber * 1000);
+      if (end <= start || !map?.objects.some(o => o.t >= start && o.t <= end)) {
+        $('practice-error').textContent = 'Choose an end after the start and include at least one note.';
+        return;
+      }
+      practiceDialog.close();
+      play(map, false, false, { start, end, rate: Number($('practice-speed').value), auto: $('practice-auto').checked });
+    });
     const firstGesture = () => {
       if (gestured) return;
       gestured = true;
@@ -792,6 +882,7 @@
     canvas.addEventListener('contextmenu', e => e.preventDefault());
 
     window.addEventListener('keydown', e => {
+      if (practiceDialog.open) return;
       if (!game) {
         if (e.key === 'Escape' && !$('loading').classList.contains('hidden')) {
           e.preventDefault();
@@ -813,6 +904,11 @@
         if (game.paused) resumeGame(); else pauseGame();
         return;
       }
+      if (!e.repeat && e.code === 'KeyR' && game.restartPractice) {
+        e.preventDefault();
+        game.restartPractice();
+        return;
+      }
       if (e.repeat || game.paused || game.replay) return;
       // Space skips a long intro first; mania layouts may also use it as a column key.
       if (e.code === 'Space' && game.canSkip(game.time())) { e.preventDefault(); game.input('skip'); return; }
@@ -825,7 +921,7 @@
 
     $('btn-resume').addEventListener('click', resumeGame);
     $('btn-retry').addEventListener('click', () => {
-      if (game?.replay) return;
+      if (game?.replay || game?.restartPractice) return;
       if (testRun) { const run = testRun; startTest(run.map, run.from, run.auto, run.assets); return; }
       const map = currentMap;
       if (game) game.destroy();
@@ -1190,6 +1286,14 @@
     art = new P.Art($('art'));
     bindSettings();
     bindInput();
+    if (window.icaDesktop) {
+      const button = document.createElement('button');
+      button.className = 'btn';
+      button.textContent = 'Use as wallpaper';
+      button.title = 'Toggle wallpaper with Ctrl+Alt+P';
+      button.addEventListener('click', () => window.ipc.postMessage('toggle-wallpaper'));
+      $('btn-settings').before(button);
+    }
     drawer(false);
     addBuiltins();
     state.rowId = library[0].id;
@@ -1203,6 +1307,7 @@
       renderLibrary();
       selectCurrent();
     } catch (e) { /* storage unavailable: imports just last for this visit */ }
+    if (window.icaDesktop) window.ipc.postMessage('ready');
   }
 
   boot();

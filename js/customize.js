@@ -48,17 +48,23 @@
       const name = key.split(/[\\/]/).at(-1);
       if (!entries.has(name)) entries.set(name, entry);
     }
+    const densities = new WeakMap();
     const load = async name => {
       for (const suffix of ['@2x.png', '.png']) {
         const entry = entries.get(name + suffix);
         if (!entry) continue;
-        try { return await createImageBitmap(new Blob([await entry.get()], { type: 'image/png' })); }
+        try {
+          const bitmap = await createImageBitmap(new Blob([await entry.get()], { type: 'image/png' }));
+          densities.set(bitmap, suffix === '@2x.png' ? 2 : 1);
+          return bitmap;
+        }
         catch { /* Try the standard-resolution image or the built-in fallback. */ }
       }
       return null;
     };
     const names = {
       hitcircle: 'hitcircle', overlay: 'hitcircleoverlay', cursor: 'cursor', approach: 'approachcircle',
+      cursorTrail: 'cursortrail', cursorMiddle: 'cursormiddle',
       sliderStart: 'sliderstartcircle', sliderStartOverlay: 'sliderstartcircleoverlay',
       sliderEnd: 'sliderendcircle', sliderEndOverlay: 'sliderendcircleoverlay', reverseArrow: 'reversearrow',
     };
@@ -80,20 +86,42 @@
       loadFrames('sliderb', 'sliderb'), loadFrames('sliderfollowcircle', 'sliderfollowcircle-'),
     ]);
     const ini = entries.get('skin.ini');
+    let prefix = 'default';
+    skin.overlayAboveNumber = true;
     if (ini) {
       const contents = new TextDecoder().decode(await ini.get());
-      for (const [key, field] of [['SliderBorder', 'sliderBorder'], ['SliderTrackOverride', 'sliderTrack']]) {
-        const match = contents.match(new RegExp(`^\\s*${key}\\s*:\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})(?=\\s*(?://|$))`, 'im'));
-        const rgb = match?.slice(1).map(Number);
-        if (rgb?.every(value => value <= 255)) {
-          skin[field] = '#' + rgb.map(value => value.toString(16).padStart(2, '0')).join('');
-        }
+      const fields = new Map();
+      for (const line of contents.split(/\r?\n/)) {
+        const match = line.match(/^\s*([\w]+)\s*:\s*(.*?)\s*(?:\/\/.*)?$/);
+        if (match) fields.set(match[1].toLowerCase(), match[2]);
       }
-      skin.animationFps = Number(contents.match(/^\s*AnimationFramerate\s*:\s*(\d+)/im)?.[1]) || 0;
+      const rgb = value => {
+        const parts = value?.split(',').map(part => part.trim());
+        if (parts?.length === 3 && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)) {
+          return '#' + parts.map(part => Number(part).toString(16).padStart(2, '0')).join('');
+        }
+      };
+      for (const [key, field] of [['SliderBorder', 'sliderBorder'], ['SliderTrackOverride', 'sliderTrack']]) {
+        skin[field] = rgb(fields.get(key.toLowerCase()));
+      }
+      const colors = Array.from({ length: 8 }, (_, i) => rgb(fields.get('combo' + (i + 1)))).filter(Boolean);
+      if (colors.length) skin.colors = colors;
+      skin.animationFps = Math.max(0, Number(fields.get('animationframerate')) || 0);
+      prefix = (fields.get('hitcircleprefix') || prefix).toLowerCase().split(/[\\/]/).at(-1);
+      skin.digitOverlap = Number(fields.get('hitcircleoverlap')) || 0;
+      skin.overlayAboveNumber = (fields.get('hitcircleoverlayabovenumber') ?? fields.get('hitcircleoverlayabovenumer')) !== '0';
+      skin.cursorCentre = fields.get('cursorcentre') !== '0';
+      skin.cursorRotate = fields.get('cursorrotate') !== '0';
+      skin.cursorExpand = fields.get('cursorexpand') !== '0';
+      skin.cursorTrailRotate = fields.get('cursortrailrotate') === '1';
     }
-    if (!Object.entries(skin).some(([key, value]) => key !== 'animationFps' && (Array.isArray(value) ? value.length : value))) {
+    skin.digits = await Promise.all(Array.from({ length: 10 }, (_, i) => load(prefix + '-' + i)));
+    if (!Object.keys(names).some(key => skin[key]) && !skin.digits.some(Boolean) && !skin.colors
+      && !skin.sliderBallFrames.length && !skin.followCircleFrames.length && !skin.sliderTrack && !skin.sliderBorder) {
       throw new Error('This skin has no supported Standard textures or slider colours.');
     }
+    skin.densities = densities;
+    skin.tintCache = new WeakMap();
     return skin;
   }
 

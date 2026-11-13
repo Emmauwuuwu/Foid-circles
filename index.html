@@ -6,7 +6,7 @@
 <title>ica osu webport</title>
 <meta name="theme-color" content="#e71908">
 <link rel="icon" href="assets/ica.png" type="image/png">
-<link rel="stylesheet" href="css/style.css?v=ica6">
+<link rel="stylesheet" href="css/style.css?v=practice1">
 </head>
 <body>
 
@@ -68,6 +68,7 @@
       <dl class="facts" id="hero-facts"></dl>
       <div class="actions">
         <button class="play" id="btn-play"><svg class="i" aria-hidden="true"><use href="#i-play"/></svg>Play<kbd>Enter</kbd></button>
+        <button class="btn big" id="btn-practice">Practice</button>
         <button class="btn big" id="btn-edit"><span id="btn-edit-label">Edit</span><kbd>E</kbd></button>
         <button class="btn big hidden" id="btn-replay">Watch saved replay</button>
         <div class="mods">
@@ -92,9 +93,14 @@
     <h3>Sound</h3>
     <label class="slide"><span class="slide-top"><span>Music</span><output id="set-music-val"></output></span><input type="range" id="set-music" min="0" max="1" step="0.05"></label>
     <label class="slide"><span class="slide-top"><span>Hit sounds</span><output id="set-sfx-val"></output></span><input type="range" id="set-sfx" min="0" max="1" step="0.05"></label>
+    <label class="slide hidden"><input type="checkbox" id="set-wallpaper-sound"> Wallpaper sound <kbd>Ctrl+Alt+M</kbd></label>
     <label class="slide"><span class="slide-top"><span>Audio offset</span><output id="set-offset-val"></output></span><input type="range" id="set-offset" min="-150" max="150" step="5"><small>If you always hit late, raise this. If early, lower it.</small></label>
     <h3>Gameplay</h3>
     <label class="slide">Render resolution <select id="set-render"><option value="native">Native</option><option value="1">Performance (1×)</option><option value="0.75">Performance (0.75×)</option></select><small>0.75× also simplifies the playfield backdrop and connectors.</small></label>
+    <div id="wallpaper-display" class="hidden">
+      <label class="slide"><span class="slide-top"><span>Wallpaper playfield size</span><output id="set-wallpaper-size-val"></output></span><input type="range" id="set-wallpaper-size" min="0.4" max="1.2" step="0.05"><small>Lower this to give notes more room around the edges.</small></label>
+      <label class="slide">Wallpaper resolution <select id="set-wallpaper-render"><option value="0.75">Performance (75%)</option><option value="1">Native (100%)</option><option value="1.25">Sharp (125%)</option><option value="1.5">Sharp (150%)</option></select><small>Higher resolution can lower FPS.</small></label>
+    </div>
     <label class="slide"><input type="checkbox" id="set-frame-time"> Frame-time graph <small>Shows time between frames. The yellow line marks the 4.17 ms target for 240 FPS.</small></label>
     <label class="slide">Speed <select id="mod-speed"><option value="1">Normal</option><option value="0.75">Half Time</option><option value="1.5">Double Time</option><option value="2">Double Time (2×)</option></select></label>
     <label class="slide">Difficulty <select id="mod-difficulty"><option value="">Normal</option><option value="easy">Easy</option><option value="hardRock">Hard Rock</option></select></label>
@@ -117,6 +123,23 @@
     </dl>
   </aside>
 
+  <dialog class="sheet" id="practice-dialog" aria-labelledby="practice-title">
+    <form id="practice-form">
+      <h2 id="practice-title">Practice a section</h2>
+      <div class="sheet-grid">
+        <label class="slide">Start (seconds)<input id="practice-start" type="number" min="0" step="0.001" required></label>
+        <label class="slide">End (seconds)<input id="practice-end" type="number" min="0.001" step="0.001" required></label>
+        <label class="slide">Speed <select id="practice-speed"><option value="0.5">50%</option><option value="0.75" selected>75%</option><option value="1">100%</option></select></label>
+      </div>
+      <label><input id="practice-auto" type="checkbox"> Autoplay</label>
+      <p class="sheet-error" id="practice-error" role="alert"></p>
+      <div class="sheet-foot">
+        <span class="sheet-need"><kbd>R</kbd> Restart loop</span>
+        <button class="btn" id="practice-cancel" type="button">Cancel</button>
+        <button class="play" type="submit">Start loop</button>
+      </div>
+    </form>
+  </dialog>
   <section id="newmap" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="nm-heading">
     <form class="sheet" id="newmap-form">
       <h2 id="nm-heading">New map</h2>
@@ -312,11 +335,11 @@
 <script src="js/mapformat.js?v=lazy-maps1"></script>
 <script src="js/mapwrite.js"></script>
 <script src="js/music.js"></script>
-<script src="js/game.js?v=replay1"></script>
+<script src="js/game.js?v=practice1"></script>
 <script src="js/modes.js"></script>
-<script src="js/art.js?v=ica6"></script>
+<script src="js/art.js?v=desktop1"></script>
 <script src="js/editor.js"></script>
-<script src="js/customize.js?v=skin3"></script>
-<script src="js/app.js?v=replay1"></script>
+<script src="js/customize.js?v=custom-skins1"></script>
+<script src="js/app.js?v=practice1"></script>
 </body>
 </html>

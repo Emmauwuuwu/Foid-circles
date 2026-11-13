@@ -16,6 +16,7 @@
       this.beatOrigin = 0;
       this.running = false;
       this.frame = null;
+      this.timer = null;
       this.paint = this.paint.bind(this);
       this.resize();
       window.addEventListener('resize', () => this.resize());
@@ -65,7 +66,9 @@
     stop() {
       this.running = false;
       cancelAnimationFrame(this.frame);
+      clearTimeout(this.timer);
       this.frame = null;
+      this.timer = null;
       this.previous = null;
     }
 
@@ -81,10 +84,14 @@
 
     paint(now) {
       cancelAnimationFrame(this.frame);
+      clearTimeout(this.timer);
       this.frame = null;
+      this.timer = null;
       const { c, width, height, dpr } = this;
-      if (this.running && !reducedMotion.matches && now - (this.lastPaint ?? -Infinity) < 30) {
-        this.frame = requestAnimationFrame(this.paint);
+      const wallpaper = document.documentElement.classList.contains('wallpaper');
+      const interval = wallpaper ? 65 : 30;
+      if (this.running && !reducedMotion.matches && now - (this.lastPaint ?? -Infinity) < interval) {
+        this.schedulePaint(wallpaper, interval - (now - this.lastPaint));
         return;
       }
       this.lastPaint = now;
@@ -120,7 +127,12 @@
         c.stroke();
       }
       if (progress >= 1) this.previous = null;
-      if (this.running && !reducedMotion.matches) this.frame = requestAnimationFrame(this.paint);
+      if (this.running && !reducedMotion.matches) this.schedulePaint(wallpaper, interval);
+    }
+
+    schedulePaint(wallpaper, delay) {
+      if (wallpaper) this.timer = setTimeout(() => this.paint(performance.now()), delay);
+      else this.frame = requestAnimationFrame(this.paint);
     }
   }
 
