@@ -584,18 +584,22 @@
   }
 
   let hitSoundLoad;
+  async function decodeHitSound(key, path) {
+    try {
+      const response = await fetch(path);
+      if (response.ok) return [key, await audioCtx.decodeAudioData(await response.arrayBuffer())];
+    } catch { /* Missing samples fall back during playback. */ }
+    return [key, null];
+  }
+
   function loadHitSounds() {
-    return hitSoundLoad ??= Promise.all(['normal', 'soft', 'drum'].flatMap(bank =>
-      ['normal', 'whistle', 'finish', 'clap'].map(async kind => {
+    return hitSoundLoad ??= Promise.all([
+      decodeHitSound('tap', 'assets/hitsounds/osu-hit-sound.mp3'),
+      ...['normal', 'soft', 'drum'].flatMap(bank => ['normal', 'whistle', 'finish', 'clap'].map(kind => {
         const key = `${bank}-hit${kind}`;
-        try {
-          const response = await fetch(`assets/hitsounds/${key}.wav?v=argon1`);
-          if (!response.ok) return [key, null];
-          return [key, await audioCtx.decodeAudioData(await response.arrayBuffer())];
-        } catch {
-          return [key, null];
-        }
-      }))).then(Object.fromEntries);
+        return decodeHitSound(key, `assets/hitsounds/${key}.wav?v=argon1`);
+      })),
+    ]).then(Object.fromEntries);
   }
 
   const loading = text => { $('loading-text').textContent = text; show('loading'); };

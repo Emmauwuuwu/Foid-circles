@@ -392,15 +392,16 @@
       if (this.mods.auto && now - (this.lastHitSound ?? -Infinity) < 0.02) return;
       this.lastHitSound = now;
       const samples = this.opts.hitSounds;
+      const tap = samples?.tap || samples?.['normal-hitnormal'];
+      if (!this.opts.followBeatmapHitSounds && tap) {
+        const source = this.ctx.createBufferSource();
+        source.buffer = tap;
+        source.connect(this.sfx);
+        source.onended = () => source.disconnect();
+        source.start(now);
+        return;
+      }
       if (samples?.['normal-hitnormal']) {
-        if (!this.opts.followBeatmapHitSounds) {
-          const source = this.ctx.createBufferSource();
-          source.buffer = samples['normal-hitnormal'];
-          source.connect(this.sfx);
-          source.onended = () => source.disconnect();
-          source.start(now);
-          return;
-        }
         const banks = ['normal', 'normal', 'soft', 'drum'];
         const settings = object?.hitSample;
         const edges = edge == null ? null : object.extras;
