@@ -393,6 +393,14 @@
       this.lastHitSound = now;
       const samples = this.opts.hitSounds;
       if (samples?.['normal-hitnormal']) {
+        if (!this.opts.followBeatmapHitSounds) {
+          const source = this.ctx.createBufferSource();
+          source.buffer = samples['normal-hitnormal'];
+          source.connect(this.sfx);
+          source.onended = () => source.disconnect();
+          source.start(now);
+          return;
+        }
         const banks = ['normal', 'normal', 'soft', 'drum'];
         const settings = object?.hitSample;
         const edges = edge == null ? null : object.extras;

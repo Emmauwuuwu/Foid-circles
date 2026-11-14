@@ -42,6 +42,7 @@
   const settings = Object.assign({ music: 0.8, sfx: 0.6, offset: 0, scroll: 650, auto: false, nofail: false, darkMode: false,
     speed: '1', difficulty: '', fail: '', hidden: false, spunOut: false, flashlight: false, skin: 'original', render: 'native', frameTime: false, wallpaperSound: false }, store.get('settings', {}));
   let importedSkin = null;
+  settings.hitSoundsMode ??= 'argon';
   settings.wallpaperSize ??= 0.85;
   settings.wallpaperRender ??= '1';
   const best = store.get('best', {});
@@ -508,6 +509,7 @@
     bindSelect('mod-fail', 'fail');
     bindSelect('set-skin', 'skin');
     bindSelect('set-render', 'render');
+    bindSelect('set-hit-sounds', 'hitSoundsMode');
     if (window.icaDesktop) {
       $('wallpaper-display').classList.remove('hidden');
       bindRange('set-wallpaper-size', 'wallpaperSize', pct);
@@ -680,6 +682,7 @@
         audioCtx,
         sfxGain,
         hitSounds,
+        followBeatmapHitSounds: settings.hitSoundsMode === 'beatmap',
         audioBuffer: assets.audioBuffer,
         bgImage: assets.bgImage,
         mods,
