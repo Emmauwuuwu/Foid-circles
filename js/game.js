@@ -373,7 +373,7 @@
         this.score += Math.round(j.value * (1 + Math.min(this.combo, 400) * 0.02));
         this.health = Math.min(1, this.health + j.heal);
         this.addFx({ kind: 'burst', x, y, t0: t, color: COLORS[(o.color || 0) % 4] });
-        this.playHit(kind);
+        this.playHit(kind, o, o.type === 'slider' ? o.slides : undefined);
       }
       if (this.quietHits && kind !== 'miss') return;
       if (this.singleLabel) this.fx = this.fx.filter(f => f.kind !== 'label');
@@ -386,11 +386,44 @@
       return n ? (c.perfect * 300 + c.great * 100 + c.ok * 50) / (n * 300) : 1;
     }
 
-    playHit(kind) {
-      if (!this.sfx) return;
+    playHit(kind, object, edge) {
+      if (!this.sfx || this.sfx.gain?.value === 0) return;
       const now = this.ctx.currentTime;
       if (this.mods.auto && now - (this.lastHitSound ?? -Infinity) < 0.02) return;
       this.lastHitSound = now;
+      const samples = this.opts.hitSounds;
+      if (samples?.['normal-hitnormal']) {
+        const banks = ['normal', 'normal', 'soft', 'drum'];
+        const settings = object?.hitSample;
+        const edges = edge == null ? null : object.extras;
+        const [edgeNormal, edgeAddition] = (edges?.[1]?.split('|')[edge] || '').split(':').map(Number);
+        const normal = edgeNormal || settings?.normal || 1;
+        const addition = edgeAddition || edgeNormal || settings?.addition || normal;
+        const edgeFlags = edges?.[0]?.split('|')[edge];
+        const flags = edgeFlags ? Number(edgeFlags) : object?.hitSound || 0;
+        const volume = settings?.volume ?? 1;
+        if (!volume) return;
+        const gain = this.ctx.createGain();
+        gain.gain.value = volume;
+        gain.connect(this.sfx);
+        let playing = 0;
+        for (const [bit, name] of [[0, 'normal'], [2, 'whistle'], [4, 'finish'], [8, 'clap']]) {
+          if (bit && !(flags & bit)) continue;
+          const bank = banks[bit ? addition : normal] || 'normal';
+          const buffer = samples[`${bank}-hit${name}`] || samples[`normal-hit${name}`];
+          if (!buffer) continue;
+          const source = this.ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(gain);
+          playing++;
+          source.onended = () => {
+            source.disconnect();
+            if (--playing === 0) gain.disconnect();
+          };
+          source.start(now);
+        }
+        return;
+      }
       const g = this.ctx.createGain();
       g.gain.setValueAtTime(0.35, now);
       g.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
@@ -852,7 +885,7 @@
         o.headHit = true;
         this.addCombo();
         this.score += 30;
-        this.playHit('great');
+        this.playHit('great', o, 0);
         this.addFx({ kind: 'burst', x: o.x, y: o.y, t0: t, color: COLORS[o.color % 4] });
       }
     }
@@ -878,6 +911,13 @@
         else {
           o.offFor += elapsed;
           if (o.offFor > 200 && !o.broke && t > o.t + 200) { o.broke = true; this.breakCombo(); }
+        }
+      }
+      if (this.opts.hitSounds && o.slides > 1 && t >= o.t) {
+        const repeat = Math.min(o.slides - 1, Math.floor((t - o.t) / ((o.endT - o.t) / o.slides)));
+        if (repeat > (o.soundRepeat || 0)) {
+          if (o.tracking) this.playHit('great', o, repeat);
+          o.soundRepeat = repeat;
         }
       }
       if (t > o.endT) {

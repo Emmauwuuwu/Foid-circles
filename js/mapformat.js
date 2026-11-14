@@ -238,6 +238,8 @@
     map.keys = Math.max(1, Math.min(18, Math.round(map.cs)));
     const objects = [];
     let tp = 0, beat = map.beatMs, sv = 1;
+    let sampleBank = { normal: 1, soft: 2, drum: 3 }[general.SampleSet?.toLowerCase()] || 1;
+    let sampleVolume = 100;
 
     const lines = sections.HitObjects
       .map(l => l.split(','))
@@ -250,6 +252,8 @@
 
       while (tp < timing.length && timing[tp].t <= t) {
         const p = timing[tp++];
+        if (p.sampleSet >= 1 && p.sampleSet <= 3) sampleBank = p.sampleSet;
+        sampleVolume = p.volume;
         if (p.uninherited) { beat = p.beat; sv = 1; }
         else sv = p.beat < 0 ? Math.max(0.1, Math.min(10, -100 / p.beat)) : 1;
       }
@@ -302,6 +306,12 @@
         if (!(o.endT > t)) continue;
         o.extras = f[6] || '';
       } else continue;
+      if (!opts.summary) {
+        const sample = Array.isArray(o.extras) ? o.extras[2] : o.extras;
+        const [normal, addition, , volume] = (sample || '').split(':').map(Number);
+        o.hitSample = { normal: normal || sampleBank, addition: addition || normal || sampleBank,
+          volume: Math.max(0, Math.min(100, volume || sampleVolume)) / 100 };
+      }
       objects.push(o);
     }
     if (!objects.length && !opts.allowEmpty) throw new Error('No playable objects in this file');

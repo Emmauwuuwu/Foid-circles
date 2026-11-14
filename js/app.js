@@ -581,6 +581,21 @@
     return { audioBuffer: await loadAudioFor(map), bgImage: await loadBackground(map) };
   }
 
+  let hitSoundLoad;
+  function loadHitSounds() {
+    return hitSoundLoad ??= Promise.all(['normal', 'soft', 'drum'].flatMap(bank =>
+      ['normal', 'whistle', 'finish', 'clap'].map(async kind => {
+        const key = `${bank}-hit${kind}`;
+        try {
+          const response = await fetch(`assets/hitsounds/${key}.wav`);
+          if (!response.ok) return [key, null];
+          return [key, await audioCtx.decodeAudioData(await response.arrayBuffer())];
+        } catch {
+          return [key, null];
+        }
+      }))).then(Object.fromEntries);
+  }
+
   const loading = text => { $('loading-text').textContent = text; show('loading'); };
 
   const replayKey = key => '1:' + key;
@@ -658,10 +673,13 @@
         if (!objects.length) throw new Error('There are no notes in that practice range.');
         playable = { ...playable, objects };
       }
+      const hitSounds = !map.mode ? await loadHitSounds() : null;
+      if (generation !== gameGeneration) return;
       session = P.createSession(canvas, {
         map: playable,
         audioCtx,
         sfxGain,
+        hitSounds,
         audioBuffer: assets.audioBuffer,
         bgImage: assets.bgImage,
         mods,
