@@ -1,4 +1,4 @@
-Unmodified Legacy skin hit samples from ppy/osu-resources.
-Source: https://github.com/ppy/osu-resources/tree/343e0b9986497743370450101147d4cdb96238ed/osu.Game.Resources/Skins/Legacy
+Unmodified Argon hitsound samples from ppy/osu-resources.
+Source: https://github.com/ppy/osu-resources/tree/343e0b9986497743370450101147d4cdb96238ed/osu.Game.Resources/Samples/Gameplay/Argon
 Licence and warranty disclaimer: https://github.com/ppy/osu-resources/blob/343e0b9986497743370450101147d4cdb96238ed/LICENCE.md
 Creative Commons Attribution-NonCommercial 4.0 International: https://creativecommons.org/licenses/by-nc/4.0/

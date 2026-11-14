@@ -587,7 +587,7 @@
       ['normal', 'whistle', 'finish', 'clap'].map(async kind => {
         const key = `${bank}-hit${kind}`;
         try {
-          const response = await fetch(`assets/hitsounds/${key}.wav`);
+          const response = await fetch(`assets/hitsounds/${key}.wav?v=argon1`);
           if (!response.ok) return [key, null];
           return [key, await audioCtx.decodeAudioData(await response.arrayBuffer())];
         } catch {
